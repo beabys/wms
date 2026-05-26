@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/events/v1;eventsv1";
+
+import "common/v1/common.proto";
+
+message CustomerApprovedEvent {
+  string customer_id = 1;
+  string approved_by = 2;
+  string approved_at = 3;
+}
+
+message CustomerSuspendedEvent {
+  string customer_id = 1;
+  string reason = 2;
+  string suspended_by = 3;
+  string suspended_at = 4;
+}

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/events/v1;eventsv1";
+
+import "common/v1/common.proto";
+
+message InboundSubmittedEvent {
+  string inbound_id = 1;
+  string customer_id = 2;
+  string submitted_at = 3;
+}
+
+message InboundApprovedEvent {
+  string inbound_id = 1;
+  string customer_id = 2;
+  string approved_by = 3;
+  string approved_at = 4;
+}
+
+message InboundFlaggedEvent {
+  string inbound_id = 1;
+  string customer_id = 2;
+  string reason = 3;
+  string flagged_by = 4;
+  string flagged_at = 5;
+}

@@ -1,0 +1,62 @@
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.test/
+vendor/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# Output
+.output/
+dist/
+tmp/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Vue / FE
+FE/apps/*/dist/
+FE/packages/*/dist/
+
+# Proto generated
+proto/gen/go/
+
+# Docker
+docker-data/
+
+# Coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+#others
+plan/
+.opencode/
+graphify-out/

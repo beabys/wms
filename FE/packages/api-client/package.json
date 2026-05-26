@@ -1,0 +1,39 @@
+{
+  "name": "@wms/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "typegen": "openapi-typescript ../../../login-service-bff/openapi.yaml --output src/types/auth.ts && openapi-typescript ../../../customer-service-bff/openapi.yaml --output src/types/customer.ts && openapi-typescript ../../../inbound-service-bff/openapi.yaml --output src/types/inbound.ts",
+    "lint": "vue-tsc --noEmit"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./clients/*": {
+      "types": "./dist/clients/*.d.ts",
+      "import": "./dist/clients/*.js"
+    },
+    "./types/*": {
+      "types": "./dist/types/*.d.ts",
+      "import": "./dist/types/*.js"
+    }
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.3",
+    "openapi-typescript": "^7.6.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3",
+    "vitest": "^3.2.4",
+    "vue-tsc": "^2.2.8"
+  }
+}

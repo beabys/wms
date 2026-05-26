@@ -1,0 +1,4 @@
+db_dsn: "postgres://wms:wms_local_dev@localhost:5432/wms_customer?sslmode=disable"
+grpc_port: 50002
+log_level: debug
+jwt_public_key_path: "login-service/keys/public.pem"

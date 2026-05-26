@@ -1,0 +1,26 @@
+package grpc
+
+import (
+	"context"
+
+	"google.golang.org/grpc/health/grpc_health_v1"
+)
+
+// HealthChecker implements the gRPC health protocol.
+type HealthChecker struct {
+	grpc_health_v1.UnimplementedHealthServer
+}
+
+// Check returns SERVING status.
+func (s *HealthChecker) Check(_ context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	return &grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	}, nil
+}
+
+// Watch streams SERVING status.
+func (s *HealthChecker) Watch(_ *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+	return stream.Send(&grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	})
+}

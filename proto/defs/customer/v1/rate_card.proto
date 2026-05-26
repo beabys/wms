@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package customer.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/customer/v1;customerv1";
+
+message RateCard {
+  string id = 1;
+  string name = 2;
+  string type = 3;
+  repeated string services = 4;
+}
