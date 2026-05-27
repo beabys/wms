@@ -13,9 +13,17 @@ test-all:
 lint:
 	golangci-lint run ./...
 
-# Generate proto Go code using Buf
-proto-gen:
-	cd proto/defs && buf generate
+# Proto builder Docker image — contains buf + protoc plugins
+PROTO_IMAGE ?= wms-proto-builder:latest
+proto-build:
+	docker build -t $(PROTO_IMAGE) -f proto/Dockerfile .
+
+# Generate proto Go code (requires proto-build first)
+proto-gen: proto-build
+	docker run --rm \
+		-v $(PWD):/workspace \
+		-w /workspace/proto/defs \
+		$(PROTO_IMAGE) generate
 
 # Docker Compose lifecycle
 docker-up:

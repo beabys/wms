@@ -34,5 +34,9 @@ create_topic "wms.inbound.submitted"
 create_topic "wms.inbound.approved"
 create_topic "wms.inbound.flagged"
 
+# Inventory events
+create_topic "wms.inventory.stock-adjusted"
+create_topic "wms.inventory.low-stock-alert"
+
 echo ""
 echo "All topics created successfully."

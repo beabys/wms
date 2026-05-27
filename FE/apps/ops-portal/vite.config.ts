@@ -19,6 +19,14 @@ export default defineConfig({
         target: 'http://localhost:8083',
         changeOrigin: true,
       },
+      '/v1/products': {
+        target: 'http://localhost:8084',
+        changeOrigin: true,
+      },
+      '/v1/stock': {
+        target: 'http://localhost:8084',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

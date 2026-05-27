@@ -96,30 +96,33 @@ func (s *InboundServer) ListInbounds(ctx context.Context, req *inboundv1.ListInb
 	}, nil
 }
 
-// ApproveInbound handles ApproveInbound RPC.
-// If inspection data is provided AND the inbound is in submitted status,
-// it first inspects then approves. If no inspection data and status is inspected,
-// it just approves.
-func (s *InboundServer) ApproveInbound(ctx context.Context, req *inboundv1.ApproveInboundRequest) (*inboundv1.ApproveInboundResponse, error) {
-	// First inspect if inspection data is provided
-	if req.Inspection != nil {
-		inspectCmd := command.InspectInboundCommand{
-			InboundID:   req.Id,
-			InspectorID: req.Inspection.InspectorId,
-			Notes:       req.Inspection.Notes,
-			InspectedAt: time.Now(),
-			Passed:      req.Inspection.Passed,
-		}
-
-		_, err := 	s.svc.InspectInbound(ctx, inspectCmd)
-		if err != nil {
-			return nil, status.Errorf(codes.FailedPrecondition, "inspect inbound: %v", err)
-		}
+// InspectInbound handles InspectInbound RPC.
+func (s *InboundServer) InspectInbound(ctx context.Context, req *inboundv1.InspectInboundRequest) (*inboundv1.InspectInboundResponse, error) {
+	if req.Inspection == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "inspection is required")
+	}
+	cmd := command.InspectInboundCommand{
+		InboundID:   req.Id,
+		InspectorID: req.Inspection.InspectorId,
+		Notes:       req.Inspection.Notes,
+		InspectedAt: time.Now(),
+		Passed:      req.Inspection.Passed,
 	}
 
-	// Then approve
-	approveCmd := command.ApproveInboundCommand{InboundID: req.Id}
-	result, err := 	s.svc.ApproveInbound(ctx, approveCmd)
+	result, err := s.svc.InspectInbound(ctx, cmd)
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "inspect inbound: %v", err)
+	}
+
+	return &inboundv1.InspectInboundResponse{
+		Inbound: domainToProto(result.Inbound),
+	}, nil
+}
+
+// ApproveInbound handles ApproveInbound RPC.
+func (s *InboundServer) ApproveInbound(ctx context.Context, req *inboundv1.ApproveInboundRequest) (*inboundv1.ApproveInboundResponse, error) {
+	cmd := command.ApproveInboundCommand{InboundID: req.Id}
+	result, err := s.svc.ApproveInbound(ctx, cmd)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "approve inbound: %v", err)
 	}

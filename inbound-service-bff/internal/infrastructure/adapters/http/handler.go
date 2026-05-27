@@ -7,15 +7,28 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	grpcadapter "github.com/beabys/wms/inbound-service-bff/internal/infrastructure/adapters/grpc"
+	inboundv1 "github.com/beabys/wms/proto/gen/go/inbound/v1"
 )
+
+// GRPCInboundClient defines the interface the HTTP handler needs from the gRPC layer.
+type GRPCInboundClient interface {
+	CreateInbound(ctx context.Context, customerID, expectedDate, notes string, items []*inboundv1.InboundItem, token string) (*inboundv1.Inbound, error)
+	GetInbound(ctx context.Context, id string, token string) (*inboundv1.Inbound, error)
+	ListInbounds(ctx context.Context, customerID, status string, pageSize int32, pageToken string, token string) ([]*inboundv1.Inbound, error)
+	InspectInbound(ctx context.Context, id, inspectorID, notes string, passed bool, token string) (*inboundv1.Inbound, error)
+	ApproveInbound(ctx context.Context, id string, token string) (*inboundv1.Inbound, error)
+	FlagInbound(ctx context.Context, id, reason string, token string) (*inboundv1.Inbound, error)
+	HoldInbound(ctx context.Context, id, reason string, token string) (*inboundv1.Inbound, error)
+	ReleaseInbound(ctx context.Context, id string, token string) (*inboundv1.Inbound, error)
+	Close() error
+}
 
 // HttpServer holds dependencies for the HTTP server.
 type HttpServer struct {
-	Server       *http.Server
-	Config       *Config
-	Logger       *zap.Logger
-	InboundClient *grpcadapter.Client
+	Server        *http.Server
+	Config        *Config
+	Logger        *zap.Logger
+	InboundClient GRPCInboundClient
 }
 
 // Config holds BFF HTTP configuration.
@@ -41,7 +54,7 @@ func (hs *HttpServer) SetLogger(l *zap.Logger) *HttpServer {
 }
 
 // SetInboundClient sets the gRPC client for inbound operations.
-func (hs *HttpServer) SetInboundClient(client *grpcadapter.Client) *HttpServer {
+func (hs *HttpServer) SetInboundClient(client GRPCInboundClient) *HttpServer {
 	hs.InboundClient = client
 	return hs
 }

@@ -116,14 +116,14 @@ func TestInboundServer_CreateAndGet(t *testing.T) {
 	assert.Equal(t, createResp.Inbound.Id, getResp.Inbound.Id)
 }
 
-func TestInboundServer_ApproveInbound(t *testing.T) {
+func TestInboundServer_InspectInbound(t *testing.T) {
 	repo := newMockGRPCRepo()
 	events := &mockGRPCEvents{}
 	svc := usecase.NewInboundService(repo, events)
 	srv := NewInboundServer(svc)
 
 	// Pre-save a submitted inbound
-	in, _ := model.SubmitInbound("inb_test_approve", "cust_1", "2026-06-01", "",
+	in, _ := model.SubmitInbound("inb_test_inspect", "cust_1", "2026-06-01", "",
 		[]model.InboundItem{{SKU: "SKU001", QuantityDeclared: 10}})
 	_ = repo.Save(context.Background(), in)
 
@@ -143,15 +143,57 @@ func TestInboundServer_ApproveInbound(t *testing.T) {
 	defer conn.Close()
 
 	client := inboundv1.NewInboundServiceClient(conn)
+	ctx := context.Background()
 
-	// Approve with inspection (inspect + approve in one call)
-	resp, err := client.ApproveInbound(context.Background(), &inboundv1.ApproveInboundRequest{
-		Id: "inb_test_approve",
+	// Inspect inbound
+	resp, err := client.InspectInbound(ctx, &inboundv1.InspectInboundRequest{
+		Id: "inb_test_inspect",
 		Inspection: &inboundv1.Inspection{
 			InspectorId: "insp_1",
 			Notes:       "all good",
 			Passed:      true,
 		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "inspected", resp.Inbound.Status)
+	assert.NotNil(t, resp.Inbound.Inspection)
+	assert.Equal(t, "insp_1", resp.Inbound.Inspection.InspectorId)
+}
+
+func TestInboundServer_ApproveInbound(t *testing.T) {
+	repo := newMockGRPCRepo()
+	events := &mockGRPCEvents{}
+	svc := usecase.NewInboundService(repo, events)
+	srv := NewInboundServer(svc)
+
+	// Pre-save a submitted inbound and inspect it first
+	in, _ := model.SubmitInbound("inb_test_approve", "cust_1", "2026-06-01", "",
+		[]model.InboundItem{{SKU: "SKU001", QuantityDeclared: 10}})
+	in.Inspect(model.Inspection{InspectorID: "insp_1", InspectedAt: time.Now()})
+	in.Status = model.StatusInspected
+	_ = repo.Save(context.Background(), in)
+
+	// Start in-process gRPC
+	server := grpc.NewServer()
+	inboundv1.RegisterInboundServiceServer(server, srv)
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = server.Serve(lis) }()
+	defer server.Stop()
+
+	conn, err := grpc.NewClient(lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := inboundv1.NewInboundServiceClient(conn)
+	ctx := context.Background()
+
+	// Approve inbound (already inspected)
+	resp, err := client.ApproveInbound(ctx, &inboundv1.ApproveInboundRequest{
+		Id: "inb_test_approve",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "approved", resp.Inbound.Status)

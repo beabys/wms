@@ -44,6 +44,9 @@ importers:
       vite:
         specifier: ^6.3.3
         version: 6.4.2(jiti@2.7.0)(lightningcss@1.32.0)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(jiti@2.7.0)(jsdom@29.1.1)(lightningcss@1.32.0)
       vue-tsc:
         specifier: ^2.2.8
         version: 2.2.12(typescript@5.9.3)
@@ -84,6 +87,9 @@ importers:
       vite:
         specifier: ^6.3.3
         version: 6.4.2(jiti@2.7.0)(lightningcss@1.32.0)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(jiti@2.7.0)(jsdom@29.1.1)(lightningcss@1.32.0)
       vue-tsc:
         specifier: ^2.2.8
         version: 2.2.12(typescript@5.9.3)
@@ -1864,8 +1870,8 @@ packages:
   vue-component-type-helpers@2.2.12:
     resolution: {integrity: sha512-YbGqHZ5/eW4SnkPNR44mKVc6ZKQoRs/Rux1sxC6rdwXb4qpbOSYfDr9DsTHolOTGmIKgM9j141mZbBeg05R1pw==}
 
-  vue-component-type-helpers@3.3.1:
-    resolution: {integrity: sha512-pu58kqxmVyEH6VfNYW1UyEfR3XAnJ27ZXT3yzXxxpjLxVzAbyC35Zk/nm/RMs7ijWnJNSd9fWkeex2OhUsx3MA==}
+  vue-component-type-helpers@3.3.2:
+    resolution: {integrity: sha512-l4Z2Y34m7nFMlx8vrslJaVtXxUpzgDMSESC7TakG/c5kwjYT/do+E0NcT2/vWDzaoIhsShg/2OKwX7Q4nbzC0g==}
 
   vue-docgen-api@4.79.2:
     resolution: {integrity: sha512-n9ENAcs+40awPZMsas7STqjkZiVlIjxIKgiJr5rSohDP0/JCrD9VtlzNojafsA1MChm/hz2h3PDtUedx3lbgfA==}
@@ -2415,7 +2421,7 @@ snapshots:
       ts-dedent: 2.2.0
       type-fest: 2.19.0
       vue: 3.5.34(typescript@5.9.3)
-      vue-component-type-helpers: 3.3.1
+      vue-component-type-helpers: 3.3.2
 
   '@tailwindcss/node@4.3.0':
     dependencies:
@@ -3531,7 +3537,7 @@ snapshots:
 
   vue-component-type-helpers@2.2.12: {}
 
-  vue-component-type-helpers@3.3.1: {}
+  vue-component-type-helpers@3.3.2: {}
 
   vue-docgen-api@4.79.2(vue@3.5.34(typescript@5.9.3)):
     dependencies:

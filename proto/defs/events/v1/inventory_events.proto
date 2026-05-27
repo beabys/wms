@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/events/v1;eventsv1";
+
+import "common/v1/common.proto";
+
+message StockAdjustedEvent {
+  string stock_entry_id = 1;
+  string product_id = 2;
+  string sku = 3;
+  double previous_quantity = 4;
+  double new_quantity = 5;
+  string adjustment_type = 6;
+  string adjusted_by = 7;
+  string adjusted_at = 8;
+}
+
+message LowStockAlertEvent {
+  string product_id = 1;
+  string sku = 2;
+  string product_name = 3;
+  double current_quantity = 4;
+  double minimum_threshold = 5;
+  string warehouse_zone = 6;
+}

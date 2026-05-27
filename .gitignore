@@ -60,3 +60,8 @@ coverage.html
 plan/
 .opencode/
 graphify-out/
+AGENTS.md
+
+# test
+test-results/
+playwright-report/

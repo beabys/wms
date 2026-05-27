@@ -85,12 +85,28 @@ func (c *Client) ListInbounds(ctx context.Context, customerID, status string, pa
 	return resp.Inbounds, nil
 }
 
+// InspectInbound inspects an inbound.
+func (c *Client) InspectInbound(ctx context.Context, id, inspectorID, notes string, passed bool, token string) (*inboundv1.Inbound, error) {
+	ctx = withToken(ctx, token)
+	resp, err := c.client.InspectInbound(ctx, &inboundv1.InspectInboundRequest{
+		Id: id,
+		Inspection: &inboundv1.Inspection{
+			InspectorId: inspectorID,
+			Notes:       notes,
+			Passed:      passed,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inspect inbound: %w", err)
+	}
+	return resp.Inbound, nil
+}
+
 // ApproveInbound approves an inbound.
-func (c *Client) ApproveInbound(ctx context.Context, id string, inspection *inboundv1.Inspection, token string) (*inboundv1.Inbound, error) {
+func (c *Client) ApproveInbound(ctx context.Context, id string, token string) (*inboundv1.Inbound, error) {
 	ctx = withToken(ctx, token)
 	resp, err := c.client.ApproveInbound(ctx, &inboundv1.ApproveInboundRequest{
-		Id:         id,
-		Inspection: inspection,
+		Id: id,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("approve inbound: %w", err)

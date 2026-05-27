@@ -33,6 +33,21 @@ const router = createRouter({
       component: () => import('../views/InboundQueueView.vue')
     },
     {
+      path: '/inventory',
+      name: 'Inventory',
+      component: () => import('../views/InventoryView.vue')
+    },
+    {
+      path: '/inventory/products',
+      name: 'Products',
+      component: () => import('../views/ProductsView.vue')
+    },
+    {
+      path: '/inventory/bin-locations',
+      name: 'BinLocations',
+      component: () => import('../views/BinLocationsView.vue')
+    },
+    {
       path: '/stock',
       name: 'Stock',
       component: () => import('../views/DashboardView.vue')

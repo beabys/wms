@@ -13,11 +13,13 @@ export interface InboundDetailShipment {
 
 import StatusBadge from '../common/StatusBadge.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   shipment: InboundDetailShipment | null
   currentStep: number
   loading?: boolean
-}>()
+}>(), {
+  loading: false
+})
 
 const emit = defineEmits<{
   stepChange: [step: number]

@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
-import { useDarkMode } from '@wms/composables'
+import { useDarkMode, useNotification } from '@wms/composables'
 
 const router = useRouter()
 const auth = useAuthStore()
 const { isDark, toggle: toggleDark } = useDarkMode()
+const { notifications, dismiss } = useNotification()
+
+const toastTypes: Record<string, string> = {
+  success: 'bg-green-600',
+  error: 'bg-red-600',
+  warning: 'bg-yellow-500',
+  info: 'bg-blue-600',
+}
 
 const navLinks = [
   { label: 'Dashboard', path: '/dashboard' },
@@ -73,4 +81,17 @@ function handleLogout(): void {
 
   <!-- Not authenticated — show full-page router view (login) -->
   <router-view v-else />
+
+  <!-- Global notification toasts -->
+  <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+    <div
+      v-for="n in notifications"
+      :key="n.id"
+      class="px-4 py-3 rounded-lg text-white text-sm shadow-lg cursor-pointer transition-all"
+      :class="toastTypes[n.type] || 'bg-gray-700'"
+      @click="dismiss(n.id)"
+    >
+      {{ n.message }}
+    </div>
+  </div>
 </template>

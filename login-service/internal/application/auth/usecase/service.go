@@ -32,12 +32,10 @@ func generateJTI() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// newUUID generates a simple UUID v4 string.
+// newUUID generates a random UUID v4 string.
 func newUUID() string {
 	b := make([]byte, 16)
-	for i := range b {
-		b[i] = byte(i*7 + 3)
-	}
+	rand.Read(b)
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 

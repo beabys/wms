@@ -69,9 +69,17 @@ message ListInboundsResponse {
   common.v1.Pagination pagination = 2;
 }
 
-message ApproveInboundRequest {
+message InspectInboundRequest {
   string id = 1;
   Inspection inspection = 2;
+}
+
+message InspectInboundResponse {
+  Inbound inbound = 1;
+}
+
+message ApproveInboundRequest {
+  string id = 1;
 }
 
 message ApproveInboundResponse {
@@ -108,6 +116,7 @@ service InboundService {
   rpc CreateInbound(CreateInboundRequest) returns (CreateInboundResponse);
   rpc GetInbound(GetInboundRequest) returns (GetInboundResponse);
   rpc ListInbounds(ListInboundsRequest) returns (ListInboundsResponse);
+  rpc InspectInbound(InspectInboundRequest) returns (InspectInboundResponse);
   rpc ApproveInbound(ApproveInboundRequest) returns (ApproveInboundResponse);
   rpc FlagInbound(FlagInboundRequest) returns (FlagInboundResponse);
   rpc HoldInbound(HoldInboundRequest) returns (HoldInboundResponse);

@@ -7,6 +7,7 @@ import (
 
 // Inspection records the result of inspecting an inbound shipment.
 type Inspection struct {
+	ID          string
 	InspectorID string
 	Notes       string
 	Photos      []string

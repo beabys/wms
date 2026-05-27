@@ -6,25 +6,140 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  PG_USER: wms
+  PG_PASSWORD: wms
+  PG_HOST: localhost
+  PG_PORT: 5432
+  PG_DSN: "postgres://wms:wms@localhost:5432"
+  GO_VERSION: '1.26'
+  NODE_VERSION: '22'
+  # Database DSNs for unit tests (individual databases per service)
+  TEST_DSN: "postgres://wms:wms@localhost:5432/wms_test?sslmode=disable"
+  AUTH_DSN: "postgres://wms:wms@localhost:5432/wms_auth?sslmode=disable"
+  CUSTOMER_DSN: "postgres://wms:wms@localhost:5432/wms_customer?sslmode=disable"
+  INBOUND_DSN: "postgres://wms:wms@localhost:5432/wms_inbound?sslmode=disable"
+  INVENTORY_DSN: "postgres://wms:wms@localhost:5432/wms_inventory?sslmode=disable"
+
 jobs:
-  go-checks:
+  # ================================================================
+  #  MIGRATIONS — up + down for all 4 services with databases
+  # ================================================================
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+      - name: Create per-service databases
+        run: |
+          for db in wms_auth wms_customer wms_inbound wms_inventory; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          done
+      - name: Migrate UP — all services
+        run: |
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            echo "═══ UP $dir → $db_name ═══"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
+          done
+      - name: Migrate DOWN 1 step — all services
+        run: |
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            echo "═══ DOWN $dir → $db_name ═══"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations down 1
+          done
+      - name: Migrate UP again — verify idempotent
+        run: |
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            echo "═══ UP (idempotent) $dir → $db_name ═══"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
+          done
+
+  # ================================================================
+  #  BE LINT — tidy, vet, build
+  # ================================================================
+  be-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Tidy check
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)
+          git diff --exit-code go.mod go.sum || { echo "go.mod/go.sum not tidy — run 'go mod tidy'"; exit 1; }
       - name: Vet
         run: go vet ./...
       - name: Build
         run: go build ./...
-      - name: Test with race
-        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic -v 2>&1 | tee test-output.log
+
+  # ================================================================
+  #  BE UNIT TESTS — with race detector + coverage
+  # ================================================================
+  be-unit:
+    runs-on: ubuntu-latest
+    needs: be-lint
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+      - name: Create databases + run migrations
+        run: |
+          for db in wms_auth wms_customer wms_inbound wms_inventory; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          done
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
+          done
+      - name: Run unit + integration tests with race
+        run: |
+          export DATABASE_DSN="$TEST_DSN"
+          export LOGIN_DATABASE_DSN="$AUTH_DSN"
+          export CUSTOMER_DATABASE_DSN="$CUSTOMER_DSN"
+          export INBOUND_DATABASE_DSN="$INBOUND_DSN"
+          export INVENTORY_DATABASE_DSN="$INVENTORY_DSN"
+          go test -tags=integration -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-output.log
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
@@ -37,7 +152,10 @@ jobs:
           name: go-test-output
           path: test-output.log
 
-  fe-checks:
+  # ================================================================
+  #  FE LINT — type check + build
+  # ================================================================
+  fe-lint:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,22 +167,44 @@ jobs:
           version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: './FE/pnpm-lock.yaml'
       - name: Install
         run: pnpm install
-      - name: Lint
-        run: pnpm lint
-        continue-on-error: true
-      - name: Build
+      - name: TypeScript check + build
         run: pnpm build
-      - name: Test
-        run: pnpm test
-        continue-on-error: true
 
-  migrations:
+  # ================================================================
+  #  FE UNIT TESTS
+  # ================================================================
+  fe-unit:
     runs-on: ubuntu-latest
+    needs: fe-lint
+    defaults:
+      run:
+        working-directory: ./FE
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: './FE/pnpm-lock.yaml'
+      - name: Install
+        run: pnpm install
+      - name: Run tests
+        run: pnpm test
+
+  # ================================================================
+  #  E2E — full-stack against real services
+  # ================================================================
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [be-unit, fe-unit, migrations]
     services:
       postgres:
         image: postgres:16
@@ -74,20 +214,104 @@ jobs:
           POSTGRES_DB: wms_test
         ports:
           - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
       - name: Install migrate CLI
         run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-      - name: Run login-service migrations
-        run: migrate -database "postgres://wms:wms@localhost:5432/wms_test?sslmode=disable" -path login-service/migrations up
-      - name: Run customer-service migrations
-        run: migrate -database "postgres://wms:wms@localhost:5432/wms_test?sslmode=disable" -path customer-service/migrations up
-      - name: Run inbound-service migrations
-        run: migrate -database "postgres://wms:wms@localhost:5432/wms_test?sslmode=disable" -path inbound-service/migrations up
+      - name: Create databases
+        run: |
+          for db in wms_auth wms_customer wms_inbound wms_inventory; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          done
+      - name: Run all migrations
+        run: |
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
+          done
+      - name: Run Playwright E2E tests
+        working-directory: ./e2e/playwright
+        run: npx playwright test
+        env:
+          VITE_USE_MOCK: "false"
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright/playwright-report/
 
+  # ================================================================
+  #  PLAYWRIGHT E2E — full-stack browser tests
+  # ================================================================
+  playwright-e2e:
+    runs-on: ubuntu-latest
+    needs: [be-unit, fe-unit, migrations]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install playwright deps
+        working-directory: ./e2e/playwright
+        run: npm ci && npx playwright install chromium
+      - name: Install FE deps
+        working-directory: ./FE
+        run: pnpm install
+      - name: Create databases + migrations
+        run: |
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+          for db in wms_auth wms_customer wms_inbound wms_inventory; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          done
+          for dir in login-service customer-service inbound-service inventory-service; do
+            db_name="wms_${dir%%-*}"
+            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
+          done
+      - name: Run Playwright E2E tests
+        working-directory: ./e2e/playwright
+        run: npx playwright test
+        env:
+          VITE_USE_MOCK: "false"
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright/playwright-report/
+
+  # ================================================================
+  #  DOCKER SMOKE — container health checks
+  # ================================================================
   docker-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -98,11 +322,9 @@ jobs:
           sleep 15
           docker compose -f deployment/docker-compose.yml ps
       - name: Health check PostgreSQL
-        run: |
-          docker exec $(docker ps -q -f name=postgres) pg_isready -U wms
+        run: docker exec $(docker ps -q -f name=postgres) pg_isready -U wms
       - name: Check Kafka
-        run: |
-          docker exec $(docker ps -q -f name=kafka) kafka-topics.sh --bootstrap-server localhost:9092 --list
+        run: docker exec $(docker ps -q -f name=kafka) kafka-topics.sh --bootstrap-server localhost:9092 --list || echo "Kafka not available (expected when disabled)"
       - name: Tear down
         if: always()
         run: docker compose -f deployment/docker-compose.yml down

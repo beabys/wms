@@ -12,11 +12,19 @@ message InboundSubmittedEvent {
   string submitted_at = 3;
 }
 
+message ApprovedItem {
+  string sku = 1;
+  string product_name = 2;
+  double quantity = 3;
+  string unit = 4;
+}
+
 message InboundApprovedEvent {
   string inbound_id = 1;
   string customer_id = 2;
   string approved_by = 3;
   string approved_at = 4;
+  repeated ApprovedItem items = 5;
 }
 
 message InboundFlaggedEvent {

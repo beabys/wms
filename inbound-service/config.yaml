@@ -14,4 +14,6 @@ kafka:
 auth:
   jwks_url: "http://localhost:8080"
   exempt_methods:
-    - "/inbound.v1.InboundService/CreateInbound"
+    - "/grpc.health.v1.Health/Check"
+
+jwt_public_key_path: "login-service/keys/public.pem"

@@ -35,7 +35,7 @@ const router = createRouter({
     {
       path: '/my-stock',
       name: 'MyStock',
-      component: () => import('../views/DashboardView.vue')
+      component: () => import('../views/MyStockView.vue')
     },
     {
       path: '/orders',

@@ -2,11 +2,16 @@ package inboundgrpc
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/beabys/wms/inbound-service/internal/app/ports"
 	"github.com/beabys/wms/inbound-service/internal/application/inbound/usecase"
+	"github.com/beabys/wms/pkg/authinterceptor"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -56,7 +61,35 @@ func (s *GRPCServer) Run(ctx context.Context, wg *errgroup.Group) {
 		s.Logger.Fatal("failed to listen", zap.Error(err))
 	}
 
-	grpcServer := grpc.NewServer()
+	// Load public key for JWT validation
+	var publicKey *rsa.PublicKey
+	if s.Config.JWTPublicKeyPath != "" {
+		pemBytes, err := os.ReadFile(s.Config.JWTPublicKeyPath)
+		if err != nil {
+			s.Logger.Fatal("failed to read public key", zap.Error(err))
+		}
+		block, _ := pem.Decode(pemBytes)
+		if block == nil {
+			s.Logger.Fatal("no PEM block in public key")
+		}
+		key, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			s.Logger.Fatal("failed to parse public key", zap.Error(err))
+		}
+		var ok bool
+		publicKey, ok = key.(*rsa.PublicKey)
+		if !ok {
+			s.Logger.Fatal("public key is not RSA")
+		}
+	}
+
+	grpcOptions := []grpc.ServerOption{}
+	if publicKey != nil {
+		grpcOptions = append(grpcOptions, grpc.UnaryInterceptor(
+			authinterceptor.JWTAuthInterceptor(publicKey, s.Config.Auth.ExemptMethods),
+		))
+	}
+	grpcServer := grpc.NewServer(grpcOptions...)
 
 	// Register inbound service
 	inboundSrv := NewInboundServer(s.Service)

@@ -24,7 +24,7 @@ async function fetchQueue(): Promise<void> {
   try {
     inboundClient.setToken(auth.token)
     const result = await inboundClient.getQueue()
-    shipments.value = result.inbounds
+    shipments.value = result.inbounds || []
   } catch {
     shipments.value = []
   } finally {
@@ -53,10 +53,10 @@ function handleStepChange(step: number): void {
 <template>
   <div class="py-8 px-4 space-y-6">
     <InboundQueue
-      :shipments="shipments.map(s => ({
+      :shipments="(shipments || []).map(s => ({
         id: s.id,
         customerName: s.customer_name,
-        productCount: s.items.length,
+        productCount: (s.items || []).length,
         status: s.status,
         expectedDate: s.expected_date,
         receivedDate: undefined
@@ -69,8 +69,8 @@ function handleStepChange(step: number): void {
       :shipment="{
         id: selectedShipment.id,
         customerName: selectedShipment.customer_name,
-        skuCount: selectedShipment.items.length,
-        totalUnits: selectedShipment.items.reduce((sum, i) => sum + i.quantity_declared, 0),
+        skuCount: (selectedShipment.items || []).length,
+        totalUnits: (selectedShipment.items || []).reduce((sum, i) => sum + i.quantity_declared, 0),
         status: selectedShipment.status,
         expectedDate: selectedShipment.expected_date
       }"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,9 +11,17 @@ import (
 	"github.com/beabys/wms/inbound-service/internal/domain/inbound/model"
 )
 
+// PGPool defines the minimal pool interface used by InboundRepository.
+// Satisfied by *pgxpool.Pool. Extracted for testability.
+type PGPool interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // InboundRepository is the PostgreSQL implementation of application InboundRepository.
 type InboundRepository struct {
-	pool *pgxpool.Pool
+	pool PGPool
 }
 
 // NewInboundRepository creates a new InboundRepository.
@@ -109,7 +116,7 @@ func (r *InboundRepository) UpdateStatus(ctx context.Context, inbound *model.Inb
 
 	// Save inspection if present
 	if inbound.Inspection != nil {
-		err = r.upsertInspection(ctx, tx, inbound.ID, inbound.Inspection)
+		err = r.upsertInspection(ctx, tx, inbound.ID, inbound.Inspection.ID, inbound.Inspection)
 		if err != nil {
 			return err
 		}
@@ -117,7 +124,7 @@ func (r *InboundRepository) UpdateStatus(ctx context.Context, inbound *model.Inb
 
 	// Save hold if present
 	if inbound.HoldRecord != nil {
-		err = r.upsertHold(ctx, tx, inbound.ID, inbound.HoldRecord)
+		err = r.upsertHold(ctx, tx, inbound.ID, inbound.HoldRecord.ID, inbound.HoldRecord)
 		if err != nil {
 			return err
 		}
@@ -226,7 +233,7 @@ func (r *InboundRepository) updateInboundStatus(ctx context.Context, tx pgx.Tx, 
 	return nil
 }
 
-func (r *InboundRepository) upsertInspection(ctx context.Context, tx pgx.Tx, inboundID string, insp *model.Inspection) error {
+func (r *InboundRepository) upsertInspection(ctx context.Context, tx pgx.Tx, inboundID, inspectionID string, insp *model.Inspection) error {
 	photosJSON, _ := json.Marshal(insp.Photos)
 	_, err := tx.Exec(ctx, `
 		INSERT INTO inspections (id, inbound_id, inspector_id, notes, photos_json, passed, inspected_at)
@@ -237,14 +244,14 @@ func (r *InboundRepository) upsertInspection(ctx context.Context, tx pgx.Tx, inb
 			photos_json = EXCLUDED.photos_json,
 			passed = EXCLUDED.passed,
 			inspected_at = EXCLUDED.inspected_at
-	`, newID(), inboundID, insp.InspectorID, insp.Notes, string(photosJSON), insp.Passed, insp.InspectedAt)
+	`, inspectionID, inboundID, insp.InspectorID, insp.Notes, string(photosJSON), insp.Passed, insp.InspectedAt)
 	if err != nil {
 		return fmt.Errorf("upsert inspection: %w", err)
 	}
 	return nil
 }
 
-func (r *InboundRepository) upsertHold(ctx context.Context, tx pgx.Tx, inboundID string, hold *model.Hold) error {
+func (r *InboundRepository) upsertHold(ctx context.Context, tx pgx.Tx, inboundID, holdID string, hold *model.Hold) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO holds (id, inbound_id, reason, created_at, released_at, released_by)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -253,7 +260,7 @@ func (r *InboundRepository) upsertHold(ctx context.Context, tx pgx.Tx, inboundID
 			created_at = EXCLUDED.created_at,
 			released_at = EXCLUDED.released_at,
 			released_by = EXCLUDED.released_by
-	`, newID(), inboundID, hold.Reason, hold.CreatedAt, hold.ReleasedAt, hold.ReleasedBy)
+	`, holdID, inboundID, hold.Reason, hold.CreatedAt, hold.ReleasedAt, hold.ReleasedBy)
 	if err != nil {
 		return fmt.Errorf("upsert hold: %w", err)
 	}
@@ -286,13 +293,13 @@ func (r *InboundRepository) loadItems(ctx context.Context, inboundID string) ([]
 
 func (r *InboundRepository) loadInspection(ctx context.Context, inboundID string) (*model.Inspection, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT inspector_id, notes, photos_json, passed, inspected_at
+		SELECT id, inspector_id, notes, photos_json, passed, inspected_at
 		FROM inspections WHERE inbound_id = $1
 	`, inboundID)
 
 	var insp model.Inspection
 	var photosJSON string
-	err := row.Scan(&insp.InspectorID, &insp.Notes, &photosJSON, &insp.Passed, &insp.InspectedAt)
+	err := row.Scan(&insp.ID, &insp.InspectorID, &insp.Notes, &photosJSON, &insp.Passed, &insp.InspectedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -305,12 +312,12 @@ func (r *InboundRepository) loadInspection(ctx context.Context, inboundID string
 
 func (r *InboundRepository) loadHold(ctx context.Context, inboundID string) (*model.Hold, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT reason, created_at, released_at, released_by
+		SELECT id, reason, created_at, released_at, released_by
 		FROM holds WHERE inbound_id = $1
 	`, inboundID)
 
 	var hold model.Hold
-	err := row.Scan(&hold.Reason, &hold.CreatedAt, &hold.ReleasedAt, &hold.ReleasedBy)
+	err := row.Scan(&hold.ID, &hold.Reason, &hold.CreatedAt, &hold.ReleasedAt, &hold.ReleasedBy)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -327,7 +334,3 @@ func nullString(s string) *string {
 	return &s
 }
 
-// newID generates a unique ID for internal use.
-func newID() string {
-	return fmt.Sprintf("gen_%d", time.Now().UnixNano())
-}

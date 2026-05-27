@@ -1,6 +1,7 @@
 // Mock API interceptor — intercepts fetch calls in dev mode.
 
 import type { LoginData, CustomerQueueData, InboundQueueData, InboundItem } from '@wms/api-client/types/responses'
+import type { ProductListData, StockListData, BinLocationListData, LowStockAlertData } from '@wms/api-client/types/inventory'
 
 const originalFetch = window.fetch
 
@@ -97,6 +98,117 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_MOCK !== 'false') {
 
     if (url.includes('/v1/inbounds/') && method === 'POST' && url.includes('/approve')) {
       return new Response(JSON.stringify({ success: true, data: null }), { status: 200 })
+    }
+
+    // ── Products ──────────────────────────────────────────────────────
+    if (url.includes('/v1/products') && method === 'GET') {
+      const data: ProductListData = {
+        products: [
+          { id: 'p1', sku: 'SKU-001', name: 'Widget Alpha', description: 'Premium widget', category: 'Electronics', unit: 'piece', weight_kg: 1.5, is_active: true, low_stock_threshold: 10, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-05-01T00:00:00Z' },
+          { id: 'p2', sku: 'SKU-002', name: 'Gadget Beta', description: 'Portable gadget', category: 'Electronics', unit: 'piece', weight_kg: 0.8, is_active: true, low_stock_threshold: 10, created_at: '2026-01-15T00:00:00Z', updated_at: '2026-05-10T00:00:00Z' },
+          { id: 'p3', sku: 'SKU-003', name: 'Component Gamma', description: 'Replacement component', category: 'Automotive', unit: 'piece', weight_kg: 2.0, is_active: true, low_stock_threshold: 20, created_at: '2026-02-01T00:00:00Z', updated_at: '2026-04-20T00:00:00Z' },
+          { id: 'p4', sku: 'SKU-004', name: 'Device Delta', description: 'IoT sensor device', category: 'Electronics', unit: 'piece', weight_kg: 0.3, is_active: true, low_stock_threshold: 15, created_at: '2026-03-01T00:00:00Z', updated_at: '2026-05-15T00:00:00Z' },
+          { id: 'p5', sku: 'SKU-005', name: 'Material Epsilon', description: 'Raw material', category: 'Other', unit: 'kg', weight_kg: 25.0, is_active: false, low_stock_threshold: 50, created_at: '2026-01-20T00:00:00Z', updated_at: '2026-03-01T00:00:00Z' },
+        ],
+        total: 5,
+        page: 1,
+        page_size: 20,
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 })
+    }
+
+    if (url.includes('/v1/products') && method === 'POST') {
+      return new Response(JSON.stringify({
+        success: true,
+        data: { id: 'p-new', sku: 'SKU-NEW', name: 'New Product', description: '', category: 'Other', unit: 'piece', weight_kg: 1.0, is_active: true, low_stock_threshold: 10, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      }), { status: 200 })
+    }
+
+    if (url.match(/\/v1\/products\/[^/]+$/) && method === 'PUT') {
+      return new Response(JSON.stringify({ success: true, data: { id: url.split('/').pop(), updated: true } }), { status: 200 })
+    }
+
+    if (url.match(/\/v1\/products\/[^/]+$/) && method === 'DELETE') {
+      return new Response(JSON.stringify({ success: true, data: null }), { status: 200 })
+    }
+
+    // ── Stock ─────────────────────────────────────────────────────────
+    if (url.includes('/v1/stock') && method === 'GET' && !url.includes('/alerts') && !url.includes('/customer/')) {
+      const data: StockListData = {
+        entries: [
+          { id: 'st-1', product_id: 'p1', bin_location_id: 'loc-1', quantity: 100, reserved_quantity: 5, lot_number: 'LOT-001', expiry_date: '2027-01-01', status: 'available', last_updated: '2026-05-20T10:00:00Z' },
+          { id: 'st-2', product_id: 'p2', bin_location_id: 'loc-2', quantity: 5, reserved_quantity: 2, lot_number: 'LOT-002', expiry_date: '2026-12-01', status: 'available', last_updated: '2026-05-19T10:00:00Z' },
+          { id: 'st-3', product_id: 'p3', bin_location_id: 'loc-3', quantity: 0, reserved_quantity: 0, lot_number: '', expiry_date: null, status: 'inactive', last_updated: '2026-05-18T10:00:00Z' },
+          { id: 'st-4', product_id: 'p4', bin_location_id: 'loc-4', quantity: 15, reserved_quantity: 10, lot_number: 'LOT-004', expiry_date: '2026-06-15', status: 'reserved', last_updated: '2026-05-20T08:00:00Z' },
+          { id: 'st-5', product_id: 'p5', bin_location_id: 'loc-1', quantity: 200, reserved_quantity: 0, lot_number: 'LOT-005', expiry_date: null, status: 'available', last_updated: '2026-05-17T10:00:00Z' },
+        ],
+        page_size: 20,
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 })
+    }
+
+    if (url.includes('/v1/stock') && method === 'POST') {
+      return new Response(JSON.stringify({
+        success: true,
+        data: { id: 'st-new', product_id: 'p1', bin_location_id: 'loc-1', quantity: 50, reserved_quantity: 0, lot_number: 'LOT-NEW', expiry_date: null, status: 'available', last_updated: new Date().toISOString() },
+      }), { status: 200 })
+    }
+
+    if (url.includes('/v1/stock/alerts/low') && method === 'GET') {
+      const data: LowStockAlertData = {
+        alerts: [
+          { product: { id: 'p2', sku: 'SKU-002', name: 'Gadget Beta', description: '', category: 'Electronics', unit: 'piece', weight_kg: 0.8, is_active: true, low_stock_threshold: 10, created_at: '2026-01-15T00:00:00Z', updated_at: '2026-05-10T00:00:00Z' }, current_quantity: 5, threshold: 10, status: 'critical' },
+          { product: { id: 'p3', sku: 'SKU-003', name: 'Component Gamma', description: '', category: 'Automotive', unit: 'piece', weight_kg: 2.0, is_active: true, low_stock_threshold: 20, created_at: '2026-02-01T00:00:00Z', updated_at: '2026-04-20T00:00:00Z' }, current_quantity: 0, threshold: 20, status: 'critical' },
+        ],
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 })
+    }
+
+    if (url.match(/\/v1\/stock\/[^/]+\/adjust$/) && method === 'POST') {
+      return new Response(JSON.stringify({ success: true, data: { id: url.split('/').slice(-2, -1)[0], quantity: 95, status: 'available' } }), { status: 200 })
+    }
+
+    if (url.match(/\/v1\/stock\/[^/]+\/reserve$/) && method === 'POST') {
+      return new Response(JSON.stringify({ success: true, data: { id: url.split('/').slice(-2, -1)[0], status: 'reserved' } }), { status: 200 })
+    }
+
+    if (url.match(/\/v1\/stock\/[^/]+\/release$/) && method === 'POST') {
+      return new Response(JSON.stringify({ success: true, data: { id: url.split('/').slice(-2, -1)[0], status: 'available' } }), { status: 200 })
+    }
+
+    // ── Bin Locations ──────────────────────────────────────────────────
+    if (url.includes('/v1/bin-locations') && method === 'GET') {
+      const data: BinLocationListData = {
+        locations: [
+          { id: 'loc-1', warehouse_zone: 'A', aisle: 'A1', rack: 'R01', shelf: 'S1', is_active: true },
+          { id: 'loc-2', warehouse_zone: 'A', aisle: 'A1', rack: 'R01', shelf: 'S2', is_active: true },
+          { id: 'loc-3', warehouse_zone: 'B', aisle: 'B2', rack: 'R03', shelf: 'S1', is_active: true },
+          { id: 'loc-4', warehouse_zone: 'C', aisle: 'C1', rack: 'R02', shelf: 'S3', is_active: true },
+          { id: 'loc-5', warehouse_zone: 'A', aisle: 'A3', rack: 'R01', shelf: 'S2', is_active: false },
+        ],
+        page_size: 20,
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 })
+    }
+
+    if (url.includes('/v1/bin-locations') && method === 'POST') {
+      return new Response(JSON.stringify({
+        success: true,
+        data: { id: 'loc-new', warehouse_zone: 'A', aisle: 'A4', rack: 'R05', shelf: 'S1', is_active: true },
+      }), { status: 200 })
+    }
+
+    // ── Customer stock ─────────────────────────────────────────────────
+    if (url.includes('/v1/stock/customer/') && method === 'GET') {
+      const customerId = url.split('/').pop()
+      const data: StockListData = {
+        entries: [
+          { id: 'cst-1', product_id: 'p1', bin_location_id: 'loc-1', quantity: 100, reserved_quantity: 5, lot_number: 'LOT-001', expiry_date: '2027-01-01', status: 'available', last_updated: '2026-05-20T10:00:00Z' },
+          { id: 'cst-2', product_id: 'p2', bin_location_id: 'loc-2', quantity: 5, reserved_quantity: 2, lot_number: 'LOT-002', expiry_date: '2026-12-01', status: 'available', last_updated: '2026-05-19T10:00:00Z' },
+        ],
+        page_size: 20,
+      }
+      return new Response(JSON.stringify({ success: true, data }), { status: 200 })
     }
 
     return originalFetch(input, init)

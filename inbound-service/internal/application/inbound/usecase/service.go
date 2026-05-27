@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/beabys/wms/inbound-service/internal/application/inbound/command"
 	"github.com/beabys/wms/inbound-service/internal/application/inbound/repository"
 	"github.com/beabys/wms/inbound-service/internal/domain/inbound/model"
@@ -57,6 +59,7 @@ func (s *InboundService) InspectInbound(ctx context.Context, cmd command.Inspect
 	}
 
 	inspection := model.Inspection{
+		ID:          newID(),
 		InspectorID: cmd.InspectorID,
 		Notes:       cmd.Notes,
 		Photos:      cmd.Photos,
@@ -129,6 +132,7 @@ func (s *InboundService) HoldInbound(ctx context.Context, cmd command.HoldInboun
 	if err := inbound.PlaceHold(cmd.Reason); err != nil {
 		return nil, fmt.Errorf("hold inbound: %w", err)
 	}
+	inbound.HoldRecord.ID = newID()
 
 	if err := s.repo.UpdateStatus(ctx, inbound); err != nil {
 		return nil, fmt.Errorf("update inbound: %w", err)
@@ -178,18 +182,7 @@ func (s *InboundService) ListInbounds(ctx context.Context, qry command.ListInbou
 	}, nil
 }
 
-// newID generates a unique ID. Replace with UUID in production.
+// newID generates a unique ID using UUID.
 func newID() string {
-	return fmt.Sprintf("inb_%d", idCounter.Add(1))
-}
-
-var idCounter = &counter{}
-
-type counter struct {
-	val int64
-}
-
-func (c *counter) Add(n int64) int64 {
-	c.val += n
-	return c.val
+	return uuid.NewString()
 }
