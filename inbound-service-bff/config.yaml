@@ -1,0 +1,13 @@
+service:
+  name: "inbound-service-bff"
+  env: "development"
+
+http:
+  port: 8083
+
+inbound_service:
+  grpc_addr: "localhost:50003"
+
+auth:
+  jwks_url: "http://localhost:8080"
+  jwt_secret: "dev-secret"

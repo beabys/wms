@@ -1,0 +1,19 @@
+service:
+  name: "inventory-service"
+  env: "development"
+
+grpc:
+  port: 50004
+
+database:
+  dsn: "postgres://wms:wms_local_dev@localhost:5432/wms_inventory?sslmode=disable"
+
+kafka:
+  brokers: []
+
+auth:
+  jwks_url: "http://localhost:50001"
+  exempt_methods:
+    - "/grpc.health.v1.Health/Check"
+
+jwt_public_key_path: "login-service/keys/public.pem"

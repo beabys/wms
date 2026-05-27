@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/auth/v1;authv1";
+
+import "common/v1/common.proto";
+
+message User {
+  string id = 1;
+  string email = 2;
+  string role = 3;
+  string customer_id = 4;
+  string created_at = 5;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  string password = 2;
+  string role = 3;
+  string customer_id = 4;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  common.v1.Pagination pagination = 1;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  common.v1.Pagination pagination = 2;
+}
+
+message UpdateUserRequest {
+  string id = 1;
+  string email = 2;
+  string role = 3;
+  string customer_id = 4;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+}

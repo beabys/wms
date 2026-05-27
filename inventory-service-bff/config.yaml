@@ -1,0 +1,13 @@
+service:
+  name: "inventory-service-bff"
+  env: "development"
+
+http:
+  port: 8084
+
+inventory_service:
+  grpc_addr: "localhost:50004"
+
+auth:
+  jwks_url: "http://localhost:8080"
+  jwt_secret: "dev-secret"

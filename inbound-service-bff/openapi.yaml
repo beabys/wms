@@ -1,0 +1,271 @@
+openapi: "3.0.3"
+info:
+  title: Inbound BFF API
+  description: Backend-for-frontend API for inbound operations
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8083
+    description: Local development
+
+paths:
+  /v1/inbounds:
+    post:
+      summary: Submit new inbound (customer)
+      operationId: SubmitInbound
+      tags: [Inbounds]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, expected_date, items]
+              properties:
+                customer_id:
+                  type: string
+                expected_date:
+                  type: string
+                  format: date
+                notes:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/InboundItemInput'
+      responses:
+        '200':
+          description: Inbound created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/queue:
+    get:
+      summary: Get ops inbound queue (sorted by expected_date)
+      operationId: GetInboundQueue
+      tags: [Inbounds]
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: page_token
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}:
+    get:
+      summary: Get inbound detail with items, inspection, hold
+      operationId: GetInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inbound detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}/inspect:
+    post:
+      summary: Submit inspection (ops)
+      operationId: InspectInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inspector_id]
+              properties:
+                inspector_id:
+                  type: string
+                notes:
+                  type: string
+                passed:
+                  type: boolean
+      responses:
+        '200':
+          description: Inspection recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}/approve:
+    post:
+      summary: Approve inbound (ops)
+      operationId: ApproveInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inbound approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}/flag:
+    post:
+      summary: Flag issue with inbound (ops)
+      operationId: FlagInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Inbound flagged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}/hold:
+    post:
+      summary: Place inbound on hold (ops)
+      operationId: HoldInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Inbound on hold
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/{id}/release:
+    post:
+      summary: Release inbound from hold (ops)
+      operationId: ReleaseInbound
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inbound released
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /v1/inbounds/customer/{id}:
+    get:
+      summary: Get customer's inbounds
+      operationId: GetCustomerInbounds
+      tags: [Inbounds]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Customer's inbounds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+    InboundItemInput:
+      type: object
+      required: [sku, quantity_declared]
+      properties:
+        sku:
+          type: string
+        quantity_declared:
+          type: integer
+        quantity_received:
+          type: integer
+        dimensions:
+          type: string
+        weight:
+          type: number

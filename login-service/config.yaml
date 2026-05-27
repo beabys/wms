@@ -1,0 +1,6 @@
+db_dsn: "postgres://wms:wms_local_dev@localhost:5432/wms_auth?sslmode=disable"
+jwt_private_key_path: "login-service/keys/private.pem"
+jwt_public_key_path: "login-service/keys/public.pem"
+access_token_ttl: "15m"
+refresh_token_ttl: "168h"
+grpc_port: 50001
