@@ -1,5 +1,0 @@
-customer_grpc_address: "localhost:50002"
-http_port: 8082
-log_level: debug
-jwt_public_key_path: ""
-service_api_key: "bff-service-key"

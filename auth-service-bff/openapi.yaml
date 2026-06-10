@@ -1,0 +1,470 @@
+openapi: "3.0.0"
+info:
+  title: Login BFF API
+  version: "1.0.0"
+  description: REST gateway for authentication and user management. Routes to auth-service via gRPC.
+
+security:
+  - BearerAuth: []
+
+paths:
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: Login
+      summary: Authenticate user with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: RefreshToken
+      summary: Refresh an expired access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/auth/me:
+    get:
+      tags: [auth]
+      operationId: GetMe
+      summary: Get current user info from JWT
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/users:
+    post:
+      tags: [users]
+      operationId: CreateUser
+      summary: Create a new user (admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+    get:
+      tags: [users]
+      operationId: ListUsers
+      summary: List all users (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/users/{id}:
+    get:
+      tags: [users]
+      operationId: GetUser
+      summary: Get user by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+    put:
+      tags: [users]
+      operationId: UpdateUser
+      summary: Update user fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+    delete:
+      tags: [users]
+      operationId: DeleteUser
+      summary: Deactivate a user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/users/{id}/roles:
+    post:
+      tags: [users]
+      operationId: AssignRole
+      summary: Assign a role to a user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: Logout
+      summary: Logout user, invalidate refresh token
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/auth/invites:
+    get:
+      tags: [auth]
+      operationId: ListInvites
+      summary: List sent invitations (paginated, filterable)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: created_after
+          in: query
+          schema:
+            type: integer
+        - name: created_before
+          in: query
+          schema:
+            type: integer
+        - name: expired
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/auth/invites/{token}/cancel:
+    post:
+      tags: [auth]
+      operationId: CancelInvite
+      summary: Cancel a pending invite
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/auth/invite:
+    post:
+      tags: [auth]
+      operationId: InviteUser
+      summary: Invite a new user (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /v1/roles:
+    get:
+      tags: [roles]
+      operationId: ListRoles
+      summary: List all roles
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+    post:
+      tags: [roles]
+      operationId: CreateRole
+      summary: Create a new role (admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreateUserRequest:
+      type: object
+      required: [email, password, name, role]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+        role:
+          type: string
+        customer_id:
+          type: string
+          nullable: true
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        active:
+          type: boolean
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+
+    Permission:
+      type: object
+      properties:
+        service:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        customer_id:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        created_at:
+          type: string
+
+    ErrorBody:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+
+    SuccessBody:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: object
+
+  responses:
+    SuccessResponse:
+      description: Successful operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessBody"
+    BadRequestResponse:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnauthorizedResponse:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFoundResponse:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"

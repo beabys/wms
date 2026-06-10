@@ -1,0 +1,43 @@
+
+services:
+  customer-service:
+    build:
+      context: ..
+      dockerfile: customer-service/Dockerfile
+    container_name: wms-customer-service
+    env_file: ../.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: wms
+      DB_PASSWORD: wms
+      DB_NAME: wms_customer
+      AUTH_SERVICE_HOST: auth-service
+      AUTH_SERVICE_PORT: 50001
+      CUSTOMER_SERVICE_GRPC_HOST: 0.0.0.0
+    restart: on-failure
+    ports:
+      - "50002:50002"
+    networks:
+      - wms-net
+
+  customer-service-bff:
+    build:
+      context: ..
+      dockerfile: customer-service-bff/Dockerfile
+    container_name: wms-customer-bff
+    env_file: ../.env
+    environment:
+      CUSTOMER_SERVICE_GRPC_HOST: customer-service
+      CUSTOMER_SERVICE_GRPC_PORT: 50002
+    ports:
+      - "8082:8082"
+    depends_on:
+      customer-service:
+        condition: service_started
+    networks:
+      - wms-net
+
+networks:
+  wms-net:
+    external: true

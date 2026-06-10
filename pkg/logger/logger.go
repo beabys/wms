@@ -3,57 +3,63 @@ package logger
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-// New creates a new zap.Logger configured for the given environment.
-// In production, it uses JSON encoding; otherwise, console encoding.
-func New(env string) (*zap.Logger, error) {
-	var cfg zap.Config
-
-	if env == "production" {
-		cfg = zap.NewProductionConfig()
-		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	} else {
-		cfg = zap.NewDevelopmentConfig()
-		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+// InterceptorLogger converts a zap or slog logger into a gRPC interceptor logger.
+func InterceptorLogger(l any) logging.Logger {
+	switch l := l.(type) {
+	case *zap.Logger:
+		return interceptorZapLogger(l)
+	case *slog.Logger:
+		return interceptorSlogLogger(l)
+	default:
+		panic(fmt.Sprintf("unsupported logger type %T", l))
 	}
-
-	cfg.EncoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
-
-	logger, err := cfg.Build(zap.AddCallerSkip(1))
-	if err != nil {
-		return nil, fmt.Errorf("build logger: %w", err)
-	}
-
-	return logger, nil
 }
 
-// MustNew creates a new logger and panics on error.
-func MustNew(env string) *zap.Logger {
-	logger, err := New(env)
-	if err != nil {
-		panic(fmt.Sprintf("failed to init logger: %v", err))
-	}
-	return logger
+func interceptorZapLogger(l *zap.Logger) logging.Logger {
+	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
+		f := make([]zap.Field, 0, len(fields)/2)
+
+		for i := 0; i < len(fields); i += 2 {
+			key := fields[i]
+			value := fields[i+1]
+
+			switch v := value.(type) {
+			case string:
+				f = append(f, zap.String(key.(string), v))
+			case int:
+				f = append(f, zap.Int(key.(string), v))
+			case bool:
+				f = append(f, zap.Bool(key.(string), v))
+			default:
+				f = append(f, zap.Any(key.(string), v))
+			}
+		}
+
+		logger := l.WithOptions(zap.AddCallerSkip(1)).With(f...)
+
+		switch lvl {
+		case logging.LevelDebug:
+			logger.Debug(msg)
+		case logging.LevelInfo:
+			logger.Info(msg)
+		case logging.LevelWarn:
+			logger.Warn(msg)
+		case logging.LevelError:
+			logger.Error(msg)
+		default:
+			panic(fmt.Sprintf("unknown level %v", lvl))
+		}
+	})
 }
 
-// Sync flushes any buffered log entries. Call as defer logger.Sync().
-func Sync(logger *zap.Logger) {
-	_ = logger.Sync()
+func interceptorSlogLogger(l *slog.Logger) logging.Logger {
+	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
+		l.Log(ctx, slog.Level(lvl), msg, fields...)
+	})
 }
-
-// Ctx extracts a logger from context or returns the fallback.
-func Ctx(ctx context.Context, fallback *zap.Logger) *zap.Logger {
-	if ctx == nil {
-		return fallback
-	}
-	if l, ok := ctx.Value(ctxKey{}).(*zap.Logger); ok {
-		return l
-	}
-	return fallback
-}
-
-type ctxKey struct{}

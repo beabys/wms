@@ -1,3 +1,0 @@
-grpc_address: "localhost:50001"
-http_port: 8080
-auth_service_api_key: "bff-api-key"

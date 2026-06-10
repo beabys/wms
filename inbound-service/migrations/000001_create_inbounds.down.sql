@@ -1,4 +1,0 @@
-DROP TABLE IF EXISTS holds;
-DROP TABLE IF EXISTS inspections;
-DROP TABLE IF EXISTS inbound_items;
-DROP TABLE IF EXISTS inbounds;

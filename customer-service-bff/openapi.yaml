@@ -1,156 +1,168 @@
-openapi: "3.0.3"
+openapi: "3.0.0"
 info:
-  title: Customer BFF API
+  title: Customer Service BFF API
   version: "1.0.0"
-  description: BFF layer for customer management in WMS.
+  description: REST gateway for customer management. Routes to customer-service via gRPC.
 
-servers:
-  - url: http://localhost:8082
-    description: Local development
+security:
+  - BearerAuth: []
 
 paths:
-  /v1/customers/invite:
-    post:
-      operationId: InviteCustomer
-      summary: Admin sends invitation to prospective customer
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-              required: [email]
-      responses:
-        "200":
-          description: Invitation created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-
   /v1/customers/register:
     post:
+      tags: [customers]
       operationId: RegisterCustomer
-      summary: Customer registers via invitation token
+      summary: Register a new customer (public, with invite token)
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                company_name: { type: string }
-                vat_number: { type: string }
-                line1: { type: string }
-                line2: { type: string }
-                city: { type: string }
-                postal_code: { type: string }
-                country: { type: string }
-                rate_card_id: { type: string }
-              required: [company_name, vat_number, line1, city, country]
+              $ref: "#/components/schemas/RegisterCustomerRequest"
       responses:
         "201":
-          description: Customer created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
 
-  /v1/customers/queue:
+  /v1/customers:
     get:
-      operationId: GetCustomerApprovalQueue
-      summary: List pending customer approvals (admin)
+      tags: [customers]
+      operationId: ListCustomers
+      summary: List customers (admin)
       security:
         - BearerAuth: []
       parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
         - name: page
           in: query
-          schema: { type: integer, default: 1 }
+          schema:
+            type: integer
+            default: 1
         - name: page_size
           in: query
-          schema: { type: integer, default: 20 }
+          schema:
+            type: integer
+            default: 20
       responses:
         "200":
-          description: Pending customers list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+          $ref: "#/components/responses/SuccessResponse"
 
-  /v1/customers/{id}/approve:
-    post:
-      operationId: ApproveCustomer
-      summary: Approve a pending customer (admin)
+  /v1/customers/me:
+    get:
+      tags: [customers]
+      operationId: GetMyCustomer
+      summary: Get own customer profile (customer portal)
       security:
         - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
       responses:
         "200":
-          description: Customer approved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
-
-  /v1/customers/{id}/suspend:
-    post:
-      operationId: SuspendCustomer
-      summary: Suspend an active customer (admin)
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                reason: { type: string }
-      responses:
-        "200":
-          description: Customer suspended
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+          $ref: "#/components/responses/SuccessResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
 
   /v1/customers/{id}:
     get:
+      tags: [customers]
       operationId: GetCustomer
-      summary: Get customer details
+      summary: Get customer by ID
       security:
         - BearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
         "200":
-          description: Customer details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+          $ref: "#/components/responses/SuccessResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+    put:
+      tags: [customers]
+      operationId: UpdateCustomer
+      summary: Update customer fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/BadRequestResponse"
 
-  /v1/customers/{id}/dashboard:
-    get:
-      operationId: GetCustomerDashboard
-      summary: Get customer dashboard aggregate data
+  /v1/customers/{id}/approve:
+    post:
+      tags: [customers]
+      operationId: ApproveCustomer
+      summary: Approve a customer (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/customers/{id}/reject:
+    post:
+      tags: [customers]
+      operationId: RejectCustomer
+      summary: Reject a customer (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/customers/{id}/suspend:
+    post:
+      tags: [customers]
+      operationId: SuspendCustomer
+      summary: Suspend a customer (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/customers/{id}/restore:
+    post:
+      tags: [customers]
+      operationId: RestoreCustomer
+      summary: Restore a suspended customer (admin)
       security:
         - BearerAuth: []
       parameters:
@@ -160,11 +172,88 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Dashboard data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Envelope'
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/customers/{id}/audit:
+    get:
+      tags: [customers]
+      operationId: ListAuditLogs
+      summary: Get audit log for a customer
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/companies/roles:
+    post:
+      tags: [companies]
+      operationId: AssignCompanyRole
+      summary: Assign a company role to a user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignCompanyRoleRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+    get:
+      tags: [companies]
+      operationId: ListCompanyRoles
+      summary: List company roles
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: customer_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
+
+  /v1/companies/permissions:
+    get:
+      tags: [companies]
+      operationId: GetUserPermissions
+      summary: Get permissions for a user within a company
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: customer_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessResponse"
 
 components:
   securitySchemes:
@@ -174,14 +263,190 @@ components:
       bearerFormat: JWT
 
   schemas:
-    Envelope:
+    RegisterCustomerRequest:
+      type: object
+      required: [token, company_name, email, password]
+      properties:
+        token:
+          type: string
+        company_name:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        phone:
+          type: string
+        vat_number:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        postal_code:
+          type: string
+        country:
+          type: string
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        phone:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        postal_code:
+          type: string
+        country:
+          type: string
+
+    AssignCompanyRoleRequest:
+      type: object
+      required: [customer_id, user_id, role_name]
+      properties:
+        customer_id:
+          type: string
+        user_id:
+          type: string
+        role_name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+    CustomerResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        company_name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        vat_number:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        postal_code:
+          type: string
+        country:
+          type: string
+        status:
+          type: string
+        company_admin_id:
+          type: string
+        created_at:
+          type: string
+
+    RegisterCustomerResponseData:
+      type: object
+      properties:
+        customer:
+          $ref: "#/components/schemas/CustomerResponse"
+        access_token:
+          type: string
+
+    CustomerListResponse:
+      type: object
+      properties:
+        customers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerResponse"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_items:
+          type: integer
+
+    CompanyRoleResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        is_default:
+          type: boolean
+
+    CompanyRoleListResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompanyRoleResponse"
+
+    PermissionsResponse:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            type: string
+
+    ErrorBody:
       type: object
       properties:
         success:
           type: boolean
-        data:
-          type: object
-          nullable: true
+          enum: [false]
         error:
           type: string
-          nullable: true
+
+    SuccessBody:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: object
+
+  responses:
+    SuccessResponse:
+      description: Successful operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessBody"
+    BadRequestResponse:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnauthorizedResponse:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFoundResponse:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"

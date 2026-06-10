@@ -1,179 +1,288 @@
-package grpc
+package grpcdapter
 
 import (
 	"context"
-	"fmt"
-
-	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
-	commonv1 "github.com/beabys/wms/proto/gen/go/common/v1"
-	customerv1 "github.com/beabys/wms/proto/gen/go/customer/v1"
+	"strings"
 
 	"github.com/beabys/wms/customer-service/internal/application/customer/command"
-	"github.com/beabys/wms/customer-service/internal/application/customer/usecase"
-	"github.com/beabys/wms/customer-service/internal/domain/customer/model"
+	"github.com/beabys/wms/customer-service/internal/application/customer/transformer"
+	commonv1 "github.com/beabys/wms/proto/gen/go/common/v1"
+	customerv1 "github.com/beabys/wms/proto/gen/go/customer/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-// Server implements customerv1.CustomerServiceServer.
-type Server struct {
+// CustomerUseCase defines the interface for customer use cases.
+type CustomerUseCase interface {
+	RegisterCustomer(ctx context.Context, cmd command.RegisterCustomerCommand) (*command.RegisterCustomerResult, error)
+	GetCustomer(ctx context.Context, id string) (*command.CustomerResult, error)
+	GetCustomerByAdminID(ctx context.Context, adminUserID string) (*command.CustomerResult, error)
+	UpdateCustomer(ctx context.Context, cmd command.UpdateCustomerCommand) (*command.CustomerResult, error)
+	ListCustomers(ctx context.Context, query command.ListCustomersQuery) (*command.ListCustomersResult, error)
+	ApproveCustomer(ctx context.Context, cmd command.ApproveCustomerCommand) (*command.CustomerResult, error)
+	RejectCustomer(ctx context.Context, cmd command.RejectCustomerCommand) (*command.CustomerResult, error)
+	SuspendCustomer(ctx context.Context, cmd command.SuspendCustomerCommand) (*command.CustomerResult, error)
+	RestoreCustomer(ctx context.Context, cmd command.RestoreCustomerCommand) (*command.CustomerResult, error)
+	GetAuditLogs(ctx context.Context, query command.ListAuditLogsQuery) (*command.ListAuditLogsResult, error)
+}
+
+// CustomerServer implements customerv1.CustomerServiceServer.
+type CustomerServer struct {
 	customerv1.UnimplementedCustomerServiceServer
-
-	log             *zap.Logger
-	customerService *usecase.CustomerService
+	customerUC CustomerUseCase
 }
 
-// NewServer creates a new gRPC customer server.
-func NewServer(log *zap.Logger, customerService *usecase.CustomerService) *Server {
-	return &Server{
-		log:             log,
-		customerService: customerService,
+// NewCustomerServer creates a new CustomerServer.
+func NewCustomerServer(customerUC CustomerUseCase) *CustomerServer {
+	return &CustomerServer{
+		customerUC: customerUC,
 	}
 }
 
-// CreateCustomer implements customer.v1.CustomerService.
-func (s *Server) CreateCustomer(ctx context.Context, req *customerv1.CreateCustomerRequest) (*customerv1.CreateCustomerResponse, error) {
-	addr, err := protoToDomainAddress(req.GetAddress())
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid address: %v", err)
-	}
-
-	cmd := &command.CreateCustomerCommand{
+// RegisterCustomer registers a new customer using an invite token.
+func (s *CustomerServer) RegisterCustomer(ctx context.Context, req *customerv1.RegisterCustomerRequest) (*customerv1.RegisterCustomerResponse, error) {
+	result, err := s.customerUC.RegisterCustomer(ctx, command.RegisterCustomerCommand{
+		Token:       req.GetToken(),
 		CompanyName: req.GetCompanyName(),
-		VATNumber:   req.GetVatNumber(),
-		Address:     addr,
-		RateCardID:  req.GetRateCardId(),
-	}
-
-	customer, err := s.customerService.CreateCustomer(ctx, cmd)
+		Email:       req.GetEmail(),
+		Password:    req.GetPassword(),
+		Phone:       req.GetPhone(),
+		VatNumber:   req.GetVatNumber(),
+		Address:     req.GetAddress(),
+		City:        req.GetCity(),
+		PostalCode:  req.GetPostalCode(),
+		Country:     req.GetCountry(),
+	})
 	if err != nil {
-		s.log.Error("create customer failed", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "create customer: %v", err)
+		return nil, mapError(err)
 	}
 
-	return &customerv1.CreateCustomerResponse{
-		Customer: domainToProtoCustomer(customer),
+	return &customerv1.RegisterCustomerResponse{
+		Customer:    &customerv1.Customer{Id: result.CustomerID},
+		AccessToken: result.AccessToken,
 	}, nil
 }
 
-// GetCustomer implements customer.v1.CustomerService.
-func (s *Server) GetCustomer(ctx context.Context, req *customerv1.GetCustomerRequest) (*customerv1.GetCustomerResponse, error) {
-	q := &command.GetCustomerQuery{CustomerID: req.GetId()}
-
-	customer, err := s.customerService.GetCustomer(ctx, q)
+// GetCustomerByAdminID retrieves a customer by company_admin_id.
+// Uses authenticated user ID from context claims (ignores request field for security).
+func (s *CustomerServer) GetCustomerByAdminID(ctx context.Context, req *customerv1.GetCustomerByAdminIDRequest) (*customerv1.GetCustomerByAdminIDResponse, error) {
+	claims := ClaimsFromContext(ctx)
+	if claims == nil {
+		return nil, status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	result, err := s.customerUC.GetCustomerByAdminID(ctx, claims.UserID)
 	if err != nil {
-		s.log.Error("get customer failed", zap.Error(err))
-		return nil, status.Errorf(codes.NotFound, "get customer: %v", err)
+		return nil, mapError(err)
+	}
+
+	return &customerv1.GetCustomerByAdminIDResponse{
+		Customer: transformer.CustomerResultToProto(result),
+	}, nil
+}
+
+// GetCustomer retrieves a customer by ID.
+func (s *CustomerServer) GetCustomer(ctx context.Context, req *customerv1.GetCustomerRequest) (*customerv1.GetCustomerResponse, error) {
+	result, err := s.customerUC.GetCustomer(ctx, req.GetId())
+	if err != nil {
+		return nil, mapError(err)
 	}
 
 	return &customerv1.GetCustomerResponse{
-		Customer: domainToProtoCustomer(customer),
+		Customer: transformer.CustomerResultToProto(result),
 	}, nil
 }
 
-// ListCustomers implements customer.v1.CustomerService.
-func (s *Server) ListCustomers(ctx context.Context, req *customerv1.ListCustomersRequest) (*customerv1.ListCustomersResponse, error) {
-	q := &command.ListCustomersQuery{
-		Page:     req.GetPagination().GetPage(),
-		PageSize: req.GetPagination().GetLimit(),
-	}
-
-	customers, total, err := s.customerService.ListCustomers(ctx, q)
+// UpdateCustomer updates an existing customer.
+func (s *CustomerServer) UpdateCustomer(ctx context.Context, req *customerv1.UpdateCustomerRequest) (*customerv1.UpdateCustomerResponse, error) {
+	result, err := s.customerUC.UpdateCustomer(ctx, command.UpdateCustomerCommand{
+		CustomerID: req.GetId(),
+		Phone:      req.GetPhone(),
+		Address:    req.GetAddress(),
+		City:       req.GetCity(),
+		PostalCode: req.GetPostalCode(),
+		Country:    req.GetCountry(),
+	})
 	if err != nil {
-		s.log.Error("list customers failed", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "list customers: %v", err)
+		return nil, mapError(err)
 	}
 
-	protoCustomers := make([]*customerv1.Customer, len(customers))
-	for i, c := range customers {
-		protoCustomers[i] = domainToProtoCustomer(c)
+	return &customerv1.UpdateCustomerResponse{
+		Customer: transformer.CustomerResultToProto(result),
+	}, nil
+}
+
+// ListCustomers retrieves a paginated list of customers.
+func (s *CustomerServer) ListCustomers(ctx context.Context, req *customerv1.ListCustomersRequest) (*customerv1.ListCustomersResponse, error) {
+	result, err := s.customerUC.ListCustomers(ctx, command.ListCustomersQuery{
+		Page:     int(req.GetPage()),
+		PageSize: int(req.GetPageSize()),
+		Status:   req.GetStatus(),
+	})
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	customers := make([]*customerv1.Customer, 0, len(result.Customers))
+	for _, c := range result.Customers {
+		customers = append(customers, transformer.CustomerResultToProto(c))
+	}
+
+	totalPages := 0
+	if result.PageSize > 0 {
+		totalPages = (result.TotalCount + result.PageSize - 1) / result.PageSize
 	}
 
 	return &customerv1.ListCustomersResponse{
-		Customers: protoCustomers,
+		Customers: customers,
 		Pagination: &commonv1.Pagination{
-			Page:  req.GetPagination().GetPage(),
-			Limit: req.GetPagination().GetLimit(),
-			Total: total,
+			Page:       int32(result.Page),
+			PageSize:   int32(result.PageSize),
+			Total:      int32(result.TotalCount),
+			TotalPages: int32(totalPages),
 		},
 	}, nil
 }
 
-// ApproveCustomer implements customer.v1.CustomerService.
-func (s *Server) ApproveCustomer(ctx context.Context, req *customerv1.ApproveCustomerRequest) (*customerv1.ApproveCustomerResponse, error) {
-	cmd := &command.ApproveCustomerCommand{CustomerID: req.GetCustomerId()}
-
-	customer, err := s.customerService.ApproveCustomer(ctx, cmd)
+// ApproveCustomer approves a customer.
+// User identity is extracted from JWT claims in context (server-authoritative).
+func (s *CustomerServer) ApproveCustomer(ctx context.Context, req *customerv1.ApproveCustomerRequest) (*customerv1.ApproveCustomerResponse, error) {
+	claims := ClaimsFromContext(ctx)
+	performedBy := ""
+	if claims != nil {
+		performedBy = claims.UserID
+	}
+	result, err := s.customerUC.ApproveCustomer(ctx, command.ApproveCustomerCommand{
+		CustomerID: req.GetId(),
+		ApprovedBy: performedBy,
+	})
 	if err != nil {
-		s.log.Error("approve customer failed", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "approve customer: %v", err)
+		return nil, mapError(err)
 	}
 
 	return &customerv1.ApproveCustomerResponse{
-		Customer: domainToProtoCustomer(customer),
+		Customer: transformer.CustomerResultToProto(result),
 	}, nil
 }
 
-// SuspendCustomer implements customer.v1.CustomerService.
-func (s *Server) SuspendCustomer(ctx context.Context, req *customerv1.SuspendCustomerRequest) (*customerv1.SuspendCustomerResponse, error) {
-	cmd := &command.SuspendCustomerCommand{
-		CustomerID: req.GetCustomerId(),
+// RejectCustomer rejects a customer with a reason.
+// User identity is extracted from JWT claims in context (server-authoritative).
+func (s *CustomerServer) RejectCustomer(ctx context.Context, req *customerv1.RejectCustomerRequest) (*customerv1.RejectCustomerResponse, error) {
+	claims := ClaimsFromContext(ctx)
+	performedBy := ""
+	if claims != nil {
+		performedBy = claims.UserID
+	}
+	_, err := s.customerUC.RejectCustomer(ctx, command.RejectCustomerCommand{
+		CustomerID: req.GetId(),
 		Reason:     req.GetReason(),
+		RejectedBy: performedBy,
+	})
+	if err != nil {
+		return nil, mapError(err)
 	}
 
-	customer, err := s.customerService.SuspendCustomer(ctx, cmd)
+	return &customerv1.RejectCustomerResponse{
+		Success: true,
+	}, nil
+}
+
+// SuspendCustomer suspends a customer.
+// User identity is extracted from JWT claims in context (server-authoritative).
+func (s *CustomerServer) SuspendCustomer(ctx context.Context, req *customerv1.SuspendCustomerRequest) (*customerv1.SuspendCustomerResponse, error) {
+	claims := ClaimsFromContext(ctx)
+	performedBy := ""
+	if claims != nil {
+		performedBy = claims.UserID
+	}
+	_, err := s.customerUC.SuspendCustomer(ctx, command.SuspendCustomerCommand{
+		CustomerID:  req.GetId(),
+		Reason:      req.GetReason(),
+		SuspendedBy: performedBy,
+	})
 	if err != nil {
-		s.log.Error("suspend customer failed", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "suspend customer: %v", err)
+		return nil, mapError(err)
 	}
 
 	return &customerv1.SuspendCustomerResponse{
-		Customer: domainToProtoCustomer(customer),
+		Success: true,
 	}, nil
 }
 
-// InviteCustomer implements customer.v1.CustomerService.
-func (s *Server) InviteCustomer(ctx context.Context, req *customerv1.InviteCustomerRequest) (*customerv1.InviteCustomerResponse, error) {
-	cmd := &command.InviteCustomerCommand{Email: req.GetEmail()}
-
-	invite, err := s.customerService.InviteCustomer(ctx, cmd)
+// RestoreCustomer restores a suspended customer.
+// User identity is extracted from JWT claims in context (server-authoritative).
+func (s *CustomerServer) RestoreCustomer(ctx context.Context, req *customerv1.RestoreCustomerRequest) (*customerv1.RestoreCustomerResponse, error) {
+	claims := ClaimsFromContext(ctx)
+	performedBy := ""
+	if claims != nil {
+		performedBy = claims.UserID
+	}
+	result, err := s.customerUC.RestoreCustomer(ctx, command.RestoreCustomerCommand{
+		CustomerID: req.GetId(),
+		RestoredBy: performedBy,
+	})
 	if err != nil {
-		s.log.Error("invite customer failed", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "invite customer: %v", err)
+		return nil, mapError(err)
 	}
 
-	return &customerv1.InviteCustomerResponse{
-		InvitationLink: invite.Token,
+	return &customerv1.RestoreCustomerResponse{
+		Customer: transformer.CustomerResultToProto(result),
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// Mapping helpers
-// ---------------------------------------------------------------------------
-
-func protoToDomainAddress(addr *commonv1.Address) (model.Address, error) {
-	if addr == nil {
-		return model.Address{}, fmt.Errorf("address is required")
+// ListAuditLogs retrieves paginated audit logs for a customer.
+func (s *CustomerServer) ListAuditLogs(ctx context.Context, req *customerv1.ListAuditLogsRequest) (*customerv1.ListAuditLogsResponse, error) {
+	result, err := s.customerUC.GetAuditLogs(ctx, command.ListAuditLogsQuery{
+		CustomerID: req.GetCustomerId(),
+		Page:       int(req.GetPage()),
+		PageSize:   int(req.GetPageSize()),
+	})
+	if err != nil {
+		return nil, mapError(err)
 	}
-	return model.NewAddress(addr.GetLine1(), addr.GetLine2(), addr.GetCity(), addr.GetPostalCode(), addr.GetCountry())
-}
 
-func domainToProtoCustomer(c *model.Customer) *customerv1.Customer {
-	return &customerv1.Customer{
-		Id:          c.ID,
-		CompanyName: c.CompanyName,
-		VatNumber:   c.VATNumber,
-		Address: &commonv1.Address{
-			Line1:      c.Address.Line1,
-			Line2:      c.Address.Line2,
-			City:       c.Address.City,
-			PostalCode: c.Address.PostalCode,
-			Country:    c.Address.Country,
+	entries := make([]*customerv1.AuditEntry, 0, len(result.Entries))
+	for _, e := range result.Entries {
+		entries = append(entries, transformer.AuditLogResultToProto(e))
+	}
+
+	totalPages := 0
+	if result.PageSize > 0 {
+		totalPages = (result.TotalCount + result.PageSize - 1) / result.PageSize
+	}
+
+	return &customerv1.ListAuditLogsResponse{
+		Entries: entries,
+		Pagination: &commonv1.Pagination{
+			Page:       int32(result.Page),
+			PageSize:   int32(result.PageSize),
+			Total:      int32(result.TotalCount),
+			TotalPages: int32(totalPages),
 		},
-		Status:        string(c.Status),
-		RateCardId:    c.RateCardID,
-		CreditBalance: fmt.Sprintf("%d", c.CreditBalance),
-		CreatedAt:     c.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}, nil
+}
+
+func mapError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	errStr := err.Error()
+	switch {
+	case strings.Contains(errStr, "not found"):
+		return status.Error(codes.NotFound, errStr)
+	case strings.Contains(errStr, "is required"):
+		return status.Error(codes.InvalidArgument, errStr)
+	case strings.Contains(errStr, "not in pending"), strings.Contains(errStr, "not in suspended"):
+		return status.Error(codes.FailedPrecondition, errStr)
+	case strings.Contains(errStr, "already used"):
+		return status.Error(codes.InvalidArgument, errStr)
+	case strings.Contains(errStr, "has expired"):
+		return status.Error(codes.InvalidArgument, errStr)
+	case strings.Contains(errStr, "already in use"):
+		return status.Error(codes.AlreadyExists, errStr)
+	default:
+		return status.Error(codes.Internal, "internal error")
 	}
 }
+
+

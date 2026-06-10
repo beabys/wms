@@ -1,0 +1,12 @@
+all: true
+structname: '{{.InterfaceName}}'
+template: testify
+packages:
+  github.com/beabys/wms/auth-service/internal/application/auth/repository:
+    config:
+      dir: mocks/application/auth/repository
+      filename: "{{.InterfaceName}}.go"
+  github.com/beabys/wms/pkg/database:
+    config:
+      dir: mocks/database
+      filename: "{{.InterfaceName}}.go"

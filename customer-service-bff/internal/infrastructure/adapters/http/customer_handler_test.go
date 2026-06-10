@@ -1,427 +1,624 @@
-package http
+package httpadapter
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
+	"go.uber.org/zap/zapcore"
 
-	v1 "github.com/beabys/wms/customer-service-bff/internal/api/v1"
-	"github.com/beabys/wms/customer-service-bff/internal/application"
+	mocks "github.com/beabys/wms/customer-service-bff/mocks/infrastructure/http"
+	grpcdapter "github.com/beabys/wms/customer-service-bff/internal/infrastructure/adapters/grpc"
+	"github.com/beabys/wms/customer-service-bff/internal/domain/model"
+	"github.com/beabys/wms/pkg/logger"
 )
 
-// mockCustomerClient implements application.CustomerService for testing.
-type mockCustomerClient struct {
-	createCustomerResp  *application.Customer
-	createCustomerErr   error
-	getCustomerResp     *application.Customer
-	getCustomerErr      error
-	listCustomersResp   *application.ListResult
-	listCustomersErr    error
-	approveCustomerResp *application.Customer
-	approveCustomerErr  error
-	suspendCustomerResp *application.Customer
-	suspendCustomerErr  error
-	inviteCustomerResp  string
-	inviteCustomerErr   error
-}
-
-func (m *mockCustomerClient) CreateCustomer(_ context.Context, _ application.CreateCustomerRequest, _ string) (*application.Customer, error) {
-	return m.createCustomerResp, m.createCustomerErr
-}
-
-func (m *mockCustomerClient) GetCustomer(_ context.Context, _, _ string) (*application.Customer, error) {
-	return m.getCustomerResp, m.getCustomerErr
-}
-
-func (m *mockCustomerClient) ListCustomers(_ context.Context, _ string, _, _ int32, _ string) (*application.ListResult, error) {
-	return m.listCustomersResp, m.listCustomersErr
-}
-
-func (m *mockCustomerClient) ApproveCustomer(_ context.Context, _, _ string) (*application.Customer, error) {
-	return m.approveCustomerResp, m.approveCustomerErr
-}
-
-func (m *mockCustomerClient) SuspendCustomer(_ context.Context, _, _, _ string) (*application.Customer, error) {
-	return m.suspendCustomerResp, m.suspendCustomerErr
-}
-
-func (m *mockCustomerClient) InviteCustomer(_ context.Context, _, _ string) (string, error) {
-	return m.inviteCustomerResp, m.inviteCustomerErr
-}
-
-// setupTest creates an HttpServer with a mock customer client and chi router.
-func setupTest(mock application.CustomerService) *chi.Mux {
-	hs := NewHttpServer(&Config{}, zap.NewNop(), mock)
-	r := chi.NewRouter()
-	v1.HandlerWithOptions(hs, v1.ChiServerOptions{
-		BaseRouter: r,
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			w.WriteHeader(http.StatusInternalServerError)
-		},
-	})
-	return r
-}
-
-// decodeResponse unmarshals JSON response body into a map.
-func decodeResponse(t *testing.T, resp *httptest.ResponseRecorder) map[string]interface{} {
+func setupTestServer(t *testing.T, svc *mocks.CustomerHandlerService) *httptest.Server {
 	t.Helper()
-	var result map[string]interface{}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
-	return result
+	log, _ := logger.NewZapLogger([]string{}, []string{}, zapcore.DebugLevel)
+	srv := NewServer(svc, log)
+	handler, _ := NewMuxHandler(srv, log, []string{"*"})
+	return httptest.NewServer(handler)
 }
 
-// ---- InviteCustomer ----
-
-func TestInviteCustomer_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		inviteCustomerResp: "invite-token-abc",
+func decodeResponse(t *testing.T, resp *http.Response) map[string]interface{} {
+	t.Helper()
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response body: %v", err)
 	}
-	router := setupTest(mock)
+	return body
+}
 
-	body := `{"email":"test@example.com"}`
-	req := httptest.NewRequest("POST", "/v1/customers/invite", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+// --- RegisterCustomer tests ---
 
-	router.ServeHTTP(resp, req)
+func TestRegisterCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RegisterCustomer(mock.Anything, mock.AnythingOfType("*model.RegisterCustomerRequest")).
+		Return(&model.RegisterCustomerResponse{
+			Customer:    &model.CustomerResponse{ID: "mock-cust", CompanyName: "ACME Corp", Status: "pending"},
+			AccessToken: "mock-token",
+		}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	require.Equal(t, http.StatusOK, resp.Code)
+	body := `{"token":"invite-token","company_name":"ACME Corp","email":"admin@acme.com","password":"secure-pass"}`
+	resp, err := http.Post(ts.URL+"/v1/customers/register", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusCreated, resp.StatusCode)
+
 	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.True(t, result["success"].(bool))
 }
 
-func TestInviteCustomer_InvalidBody(t *testing.T) {
-	mock := &mockCustomerClient{}
-	router := setupTest(mock)
+func TestRegisterCustomerHandler_ValidationError(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RegisterCustomer(mock.Anything, mock.AnythingOfType("*model.RegisterCustomerRequest")).
+		Return(nil, grpcdapter.ErrInvalidArgument)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("POST", "/v1/customers/invite", strings.NewReader(`not json`))
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
+	body := `{"token":"invite-token"}`
+	resp, err := http.Post(ts.URL+"/v1/customers/register", "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
-	require.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-func TestInviteCustomer_GRPCError(t *testing.T) {
-	mock := &mockCustomerClient{
-		inviteCustomerErr: grpc.ErrClientConnClosing,
-	}
-	router := setupTest(mock)
-
-	body := `{"email":"test@example.com"}`
-	req := httptest.NewRequest("POST", "/v1/customers/invite", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusInternalServerError, resp.Code)
-}
-
-// ---- RegisterCustomer ----
-
-func TestRegisterCustomer_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		createCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "pending",
-		},
-	}
-	router := setupTest(mock)
-
-	body := `{"company_name":"Test Corp","vat_number":"VAT123","line1":"123 Main St","city":"Springfield","country":"US"}`
-	req := httptest.NewRequest("POST", "/v1/customers/register", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
 	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.False(t, result["success"].(bool))
 }
 
-func TestRegisterCustomer_InvalidBody(t *testing.T) {
-	mock := &mockCustomerClient{}
-	router := setupTest(mock)
+func TestRegisterCustomerHandler_InvalidJSON(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("POST", "/v1/customers/register", strings.NewReader(`not json`))
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
+	resp, err := http.Post(ts.URL+"/v1/customers/register", "application/json", strings.NewReader(`{invalid`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-func TestRegisterCustomer_GRPCError(t *testing.T) {
-	mock := &mockCustomerClient{
-		createCustomerErr: grpc.ErrClientConnClosing,
-	}
-	router := setupTest(mock)
+// --- ListCustomers tests ---
 
-	body := `{"company_name":"Test Corp","vat_number":"VAT123","line1":"123 Main St","city":"Springfield","country":"US"}`
-	req := httptest.NewRequest("POST", "/v1/customers/register", strings.NewReader(body))
+func TestListCustomersHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListCustomers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&model.CustomerListResponse{
+			Customers:  []model.CustomerResponse{{ID: "c1", CompanyName: "Co 1"}},
+			Pagination: model.Pagination{Page: 1, PageSize: 20, TotalItems: 1},
+		}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers?page=1&page_size=10", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+}
+
+func TestListCustomersHandler_NoAuth(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListCustomers(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&model.CustomerListResponse{
+			Customers:  []model.CustomerResponse{{ID: "c1", CompanyName: "Co 1"}},
+			Pagination: model.Pagination{Page: 1, PageSize: 20, TotalItems: 1},
+		}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	// No auth header — should still work (JWT extractor just puts empty token in context)
+	resp, err := http.Get(ts.URL + "/v1/customers")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// This should work since the handler doesn't check JWT itself
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// --- GetMyCustomer tests ---
+
+func TestGetMyCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetMyCustomer(mock.Anything, "test-token").
+		Return(&model.CustomerResponse{ID: "mock-cust", CompanyName: "Mock Co", Status: "active", CompanyAdminID: "test-token"}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/me", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+	data, ok := result["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "mock-cust", data["id"])
+	assert.Equal(t, "active", data["status"])
+}
+
+func TestGetMyCustomerHandler_NotFound(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetMyCustomer(mock.Anything, "test-token").
+		Return(nil, grpcdapter.ErrNotFound)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/me", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.False(t, result["success"].(bool))
+}
+
+func TestGetMyCustomerHandler_NoAuth(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	// No auth header — should return 401 (handled by the handler's JWT check)
+	resp, err := http.Get(ts.URL + "/v1/customers/me")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.False(t, result["success"].(bool))
+}
+
+func TestGetMyCustomerHandler_GrpcNotFound(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetMyCustomer(mock.Anything, "test-token").
+		Return(nil, grpcdapter.ErrNotFound)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/me", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestGetMyCustomerHandler_InternalError(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetMyCustomer(mock.Anything, "test-token").
+		Return(nil, grpcdapter.ErrInternal)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/me", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// --- GetCustomer tests ---
+
+func TestGetCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetCustomer(mock.Anything, "cust-123").
+		Return(&model.CustomerResponse{ID: "cust-123", CompanyName: "Mock Co", Status: "active"}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/cust-123", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+}
+
+// --- UpdateCustomer tests ---
+
+func TestUpdateCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().UpdateCustomer(mock.Anything, "cust-123", mock.AnythingOfType("*model.UpdateCustomerRequest")).
+		Return(&model.CustomerResponse{ID: "cust-123", City: "New York", Status: "active"}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	body := `{"phone":"555-0100","city":"New York"}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/customers/cust-123", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.Equal(t, http.StatusInternalServerError, resp.Code)
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
 }
 
-// ---- GetCustomerApprovalQueue ----
+func TestUpdateCustomerHandler_InvalidJSON(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-func TestGetCustomerApprovalQueue_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		listCustomersResp: &application.ListResult{
-			Customers: []application.Customer{
-				{ID: "cust-1", CompanyName: "Test Corp", Status: "pending"},
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/customers/cust-123", strings.NewReader(`{invalid`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// --- ApproveCustomer tests ---
+
+func TestApproveCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ApproveCustomer(mock.Anything, "cust-123", "admin-token").
+		Return(&model.CustomerResponse{ID: "cust-123", Status: "active"}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/approve", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+}
+
+// --- RejectCustomer tests ---
+
+func TestRejectCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RejectCustomer(mock.Anything, "cust-123", "invalid documents").Return(nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	body := `{"reason":"invalid documents"}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/reject", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+}
+
+// --- SuspendCustomer tests ---
+
+func TestSuspendCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().SuspendCustomer(mock.Anything, "cust-123", "policy violation").Return(nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	body := `{"reason":"policy violation"}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/suspend", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// --- RestoreCustomer tests ---
+
+func TestRestoreCustomerHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RestoreCustomer(mock.Anything, "cust-123", "admin-token").
+		Return(&model.CustomerResponse{ID: "cust-123", Status: "active"}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/restore", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+}
+
+func TestRestoreCustomerHandler_NotFound(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RestoreCustomer(mock.Anything, "cust-999", "admin-token").
+		Return(nil, grpcdapter.ErrNotFound)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-999/restore", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestRestoreCustomerHandler_NotSuspended(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RestoreCustomer(mock.Anything, "cust-123", "admin-token").
+		Return(nil, grpcdapter.ErrInvalidArgument)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/restore", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestRestoreCustomerHandler_InternalError(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().RestoreCustomer(mock.Anything, "cust-123", "admin-token").
+		Return(nil, grpcdapter.ErrInternal)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/customers/cust-123/restore", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+// --- ListAuditLogs tests ---
+
+func TestListAuditLogsHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListAuditLogs(mock.Anything, "cust-123", 1, 10).
+		Return(&model.AuditLogListResponse{
+			Entries: []model.AuditEntry{
+				{ID: "audit-1", CustomerID: "cust-123", Action: "approved", PerformedBy: "admin-1", CreatedAt: "2024-01-15T10:00:00Z"},
 			},
-			Total:    1,
-			Page:     1,
-			PageSize: 20,
-		},
-	}
-	router := setupTest(mock)
+			Pagination: model.Pagination{Page: 1, PageSize: 20, TotalItems: 1},
+		}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("GET", "/v1/customers/queue?page=1&page_size=20", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/cust-123/audit?page=1&page_size=10", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.Equal(t, http.StatusOK, resp.Code)
 	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.True(t, result["success"].(bool))
 }
 
-func TestGetCustomerApprovalQueue_GRPCError(t *testing.T) {
-	mock := &mockCustomerClient{
-		listCustomersErr: errors.New("service unavailable"),
-	}
-	router := setupTest(mock)
+func TestListAuditLogsHandler_NotFound(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListAuditLogs(mock.Anything, "nonexistent", 1, 20).
+		Return(nil, grpcdapter.ErrNotFound)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("GET", "/v1/customers/queue", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/nonexistent/audit", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusInternalServerError, resp.Code)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-// ---- GetCustomer ----
+func TestListAuditLogsHandler_InternalError(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListAuditLogs(mock.Anything, "cust-123", 1, 20).
+		Return(nil, grpcdapter.ErrInternal)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-func TestGetCustomer_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		getCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "active",
-		},
-	}
-	router := setupTest(mock)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/cust-123/audit", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	req := httptest.NewRequest("GET", "/v1/customers/cust-1", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
-func TestGetCustomer_NotFound(t *testing.T) {
-	mock := &mockCustomerClient{
-		getCustomerErr: errors.New("customer not found"),
-	}
-	router := setupTest(mock)
+// --- AssignCompanyRole tests ---
 
-	req := httptest.NewRequest("GET", "/v1/customers/nonexistent", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+func TestAssignCompanyRoleHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().AssignCompanyRole(mock.Anything, mock.AnythingOfType("*model.AssignCompanyRoleRequest")).Return(nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusNotFound, resp.Code)
-}
-
-// ---- ApproveCustomer ----
-
-func TestApproveCustomer_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		approveCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "active",
-		},
-	}
-	router := setupTest(mock)
-
-	req := httptest.NewRequest("POST", "/v1/customers/cust-1/approve", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
-}
-
-func TestApproveCustomer_GRPCError(t *testing.T) {
-	mock := &mockCustomerClient{
-		approveCustomerErr: errors.New("approval failed"),
-	}
-	router := setupTest(mock)
-
-	req := httptest.NewRequest("POST", "/v1/customers/cust-1/approve", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusInternalServerError, resp.Code)
-}
-
-// ---- SuspendCustomer ----
-
-func TestSuspendCustomer_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		suspendCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "suspended",
-		},
-	}
-	router := setupTest(mock)
-
-	body := `{"reason":"Violated terms of service"}`
-	req := httptest.NewRequest("POST", "/v1/customers/cust-1/suspend", strings.NewReader(body))
+	body := `{"customer_id":"cust-1","user_id":"user-1","role_name":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/companies/roles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestSuspendCustomer_NoBody(t *testing.T) {
-	// SuspendCustomer treats decode failure as non-fatal (reason is optional).
-	mock := &mockCustomerClient{
-		suspendCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "suspended",
-		},
-	}
-	router := setupTest(mock)
+func TestAssignCompanyRoleHandler_ValidationError(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().AssignCompanyRole(mock.Anything, mock.AnythingOfType("*model.AssignCompanyRoleRequest")).
+		Return(grpcdapter.ErrInvalidArgument)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("POST", "/v1/customers/cust-1/suspend", nil)
+	body := `{"customer_id":"cust-1"}` // missing user_id and role_name
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/companies/roles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
 
-	require.Equal(t, http.StatusOK, resp.Code)
+// --- ListCompanyRoles tests ---
+
+func TestListCompanyRolesHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().ListCompanyRoles(mock.Anything, "cust-1").
+		Return(&model.CompanyRoleListResponse{
+			Roles: []model.CompanyRoleResponse{{ID: "r1", Name: "admin"}},
+		}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/companies/roles?customer_id=cust-1", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
 	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
+	assert.True(t, result["success"].(bool))
 }
 
-func TestSuspendCustomer_GRPCError(t *testing.T) {
-	mock := &mockCustomerClient{
-		suspendCustomerErr: errors.New("suspend failed"),
-	}
-	router := setupTest(mock)
+func TestListCompanyRolesHandler_MissingCustomerID(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	body := `{"reason":"Violated terms"}`
-	req := httptest.NewRequest("POST", "/v1/customers/cust-1/suspend", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/companies/roles", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusInternalServerError, resp.Code)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-// ---- GetCustomerDashboard ----
+// --- GetUserPermissions tests ---
 
-func TestGetCustomerDashboard_Success(t *testing.T) {
-	mock := &mockCustomerClient{
-		getCustomerResp: &application.Customer{
-			ID:          "cust-1",
-			CompanyName: "Test Corp",
-			Status:      "active",
-		},
-	}
-	router := setupTest(mock)
+func TestGetUserPermissionsHandler_Success(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetUserPermissions(mock.Anything, "user-1", "cust-1").
+		Return(&model.PermissionsResponse{Permissions: []string{"read"}}, nil)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("GET", "/v1/customers/cust-1/dashboard", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/companies/permissions?user_id=user-1&customer_id=cust-1", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.Equal(t, http.StatusOK, resp.Code)
 	result := decodeResponse(t, resp)
-	require.True(t, result["success"].(bool))
-	require.NotNil(t, result["data"])
+	assert.True(t, result["success"].(bool))
 }
 
-func TestGetCustomerDashboard_NotFound(t *testing.T) {
-	mock := &mockCustomerClient{
-		getCustomerErr: errors.New("customer not found"),
-	}
-	router := setupTest(mock)
+func TestGetUserPermissionsHandler_MissingParams(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
 
-	req := httptest.NewRequest("GET", "/v1/customers/cust-999/dashboard", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/companies/permissions", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// --- Health endpoint tests ---
+
+func TestHealthEndpoint(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/health")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	result := decodeResponse(t, resp)
+	assert.True(t, result["success"].(bool))
+	assert.Equal(t, "ok", result["data"].(map[string]interface{})["status"])
+}
+
+// --- Error handler tests ---
+
+func TestHandlerGrpcErrorMapping(t *testing.T) {
+	svc := mocks.NewCustomerHandlerService(t)
+	svc.EXPECT().GetCustomer(mock.Anything, "cust-999").
+		Return(nil, fmt.Errorf("some error"))
+	ts := setupTestServer(t, svc)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/customers/cust-999", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
-	resp := httptest.NewRecorder()
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	router.ServeHTTP(resp, req)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 
-	require.Equal(t, http.StatusNotFound, resp.Code)
-}
-
-// ---- NotFound ----
-
-func TestNotFound(t *testing.T) {
-	mock := &mockCustomerClient{}
-	router := setupTest(mock)
-
-	req := httptest.NewRequest("GET", "/v1/nonexistent", nil)
-	resp := httptest.NewRecorder()
-
-	router.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusNotFound, resp.Code)
+	result := decodeResponse(t, resp)
+	assert.False(t, result["success"].(bool))
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// Non-sentinel errors keep their message
+	assert.Equal(t, "some error", result["error"])
 }

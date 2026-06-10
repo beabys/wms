@@ -1,0 +1,12 @@
+all: true
+structname: '{{.InterfaceName}}'
+template: testify
+packages:
+  github.com/beabys/wms/customer-service-bff/internal/application/customer/usecase:
+    config:
+      dir: mocks/application/customer/usecase
+      filename: "{{.InterfaceName}}.go"
+  github.com/beabys/wms/customer-service-bff/internal/infrastructure/adapters/http:
+    config:
+      dir: mocks/infrastructure/http
+      filename: "{{.InterfaceName}}.go"

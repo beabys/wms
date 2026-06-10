@@ -1,53 +1,118 @@
 syntax = "proto3";
-
 package auth.v1;
 
 option go_package = "github.com/beabys/wms/proto/gen/go/auth/v1;authv1";
 
-import "auth/v1/user.proto";
+import "common/v1/common.proto";
+
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+  rpc InviteUser(InviteUserRequest) returns (InviteUserResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc ValidateInvite(ValidateInviteRequest) returns (ValidateInviteResponse);
+  rpc ListInvites(ListInvitesRequest) returns (ListInvitesResponse);
+  rpc CancelInvite(CancelInviteRequest) returns (CancelInviteResponse);
+}
+
+message ListInvitesRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  optional string status = 3;
+  optional int64 created_after = 4;
+  optional int64 created_before = 5;
+  optional bool expired = 6;
+}
+
+message InviteEntry {
+  string id = 1;
+  string email = 2;
+  string token = 3;
+  string invited_by = 4;
+  string status = 5;
+  int64 expires_at = 6;
+  int64 created_at = 7;
+}
+
+message CancelInviteRequest {
+  string token = 1;
+}
+
+message CancelInviteResponse {
+  bool success = 1;
+}
+
+message ListInvitesResponse {
+  repeated InviteEntry invites = 1;
+  common.v1.Pagination pagination = 2;
+}
+
+message ValidateInviteRequest {
+  string token = 1;
+}
+
+message ValidateInviteResponse {
+  bool valid = 1;
+  string email = 2;
+  string invited_by = 3;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+}
 
 message LoginRequest {
-    string email = 1;
-    string password = 2;
+  string email = 1;
+  string password = 2;
 }
 
 message LoginResponse {
-    string access_token = 1;
-    string refresh_token = 2;
-    User user = 3;
+  string access_token = 1;
+  string refresh_token = 2;
+  int64 expires_in = 3;
 }
 
 message RefreshTokenRequest {
-    string refresh_token = 1;
+  string refresh_token = 1;
 }
 
 message RefreshTokenResponse {
-    string access_token = 1;
-    string refresh_token = 2;
+  string access_token = 1;
+  string refresh_token = 2;
+  int64 expires_in = 3;
 }
 
 message ValidateTokenRequest {
-    string token = 1;
+  string token = 1;
 }
 
 message ValidateTokenResponse {
-    bool valid = 1;
-    string user_id = 2;
-    string role = 3;
-    repeated string permissions = 4;
+  bool valid = 1;
+  string user_id = 2;
+  string role = 3;
+  string customer_id = 4;
+  repeated string permissions = 5;
 }
 
 message GetPublicKeyRequest {}
 
 message GetPublicKeyResponse {
-    string public_key_pem = 1;       // RSA public key in PEM format
-    string key_id = 2;               // Key identifier for rotation
+  string public_key_pem = 1;
 }
 
-service AuthService {
-    rpc Login(LoginRequest) returns (LoginResponse);
-    rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
-    rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
-    rpc GetPublicKey(GetPublicKeyRequest) returns (GetPublicKeyResponse);
+message InviteUserRequest {
+  string email = 1;
+  string invited_by = 2;
 }
 
+message InviteUserResponse {
+  string token = 1;
+  string invite_link = 2;
+  int64 expires_at = 3;
+}

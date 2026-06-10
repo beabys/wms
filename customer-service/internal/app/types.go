@@ -1,22 +1,20 @@
 package app
 
 import (
-	"net"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-
-	"github.com/beabys/wms/customer-service/internal/app/ports"
-	grpcadapter "github.com/beabys/wms/customer-service/internal/infrastructure/adapters/grpc"
+	customerrepo "github.com/beabys/wms/customer-service/internal/infrastructure/persistence/repository"
+	grpcdapter "github.com/beabys/wms/customer-service/internal/infrastructure/adapters/grpc"
+	"github.com/beabys/wms/pkg/database"
+	"github.com/beabys/wms/pkg/logger"
 )
 
-// App is the Application Struct
+// App is the application struct.
 type App struct {
-	Config         ports.AppConfig
-	Logger         *zap.Logger
-	Pool           *pgxpool.Pool
-	CustomerServer *grpcadapter.Server
-	GrpcServer     *grpc.Server
-	GrpcListener   net.Listener
+	Config             *Config
+	Logger             logger.Logger
+	DB                 database.Database
+	GrpcServer         *grpcdapter.GRPCServer
+	AuthClient         *grpcdapter.AuthClient
+	CustomerRepo       *customerrepo.CustomerRepository
+	CompanyRepo        *customerrepo.CompanyRepository
+	CompanyRoleRepo    *customerrepo.CompanyRoleRepository
 }

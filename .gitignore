@@ -56,6 +56,10 @@ coverage.out
 coverage.html
 *.coverprofile
 
+# Test
+.testCoverage.txt
+unit.html
+
 #others
 plan/
 .opencode/
@@ -65,3 +69,4 @@ AGENTS.md
 # test
 test-results/
 playwright-report/
+.ilnamiqui/

@@ -1,0 +1,13 @@
+server:
+  host: "0.0.0.0"
+  port: 8082
+
+customer_service:
+  grpc_host: "localhost"
+  grpc_port: 50002
+
+log:
+  level: "debug"
+
+cors:
+  allowed_origins: "*"

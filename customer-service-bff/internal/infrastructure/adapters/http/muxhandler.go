@@ -1,85 +1,116 @@
-package http
+package httpadapter
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
-	v1 "github.com/beabys/wms/customer-service-bff/internal/api/v1"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.uber.org/zap"
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/beabys/wms/customer-service-bff/internal/api/v1"
+	"github.com/beabys/wms/customer-service-bff/internal/infrastructure/adapters/http/context"
+	"github.com/beabys/wms/pkg/logger"
 )
 
-// NewMuxHandler creates an http.Handler with all routes configured.
-func NewMuxHandler(server *HttpServer) (http.Handler, error) {
-	swagger, err := v1.GetSwagger()
-	if err != nil {
-		return nil, fmt.Errorf("error loading swagger spec: %w", err)
-	}
-
-	swagger.Servers = nil
-
+// NewMuxHandler creates a chi router with all middleware and registers the OpenAPI routes.
+func NewMuxHandler(server v1.ServerInterface, log logger.Logger, allowedOrigins []string) (http.Handler, error) {
 	r := chi.NewRouter()
 
-	prometheusMetrics := NewPrometheusMetrics()
+	// Global middleware
+	r.Use(chiMiddleware.Recoverer)
+	r.Use(chiMiddleware.RequestID)
+	r.Use(chiMiddleware.RealIP)
+	r.Use(requestLoggerMiddleware(log))
+	r.Use(corsMiddleware(allowedOrigins))
+	r.Use(TimeoutMiddleware(30 * time.Second))
 
-	r.NotFound(notFound)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
-	r.Use(middlewareMetrics(server.Logger, prometheusMetrics))
+	// JWT extractor: puts Bearer token into context
+	r.Use(jwtExtractorMiddleware)
 
-	r.Group(func(r chi.Router) {
-		r.Mount("/metrics", promhttp.Handler())
+	// Health check endpoint (not in OpenAPI spec)
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		successResponseJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	r.Group(func(r chi.Router) {
-		r.Use(cors.Handler(cors.Options{
-			AllowCredentials: true,
-			AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-			AllowedHeaders: []string{
-				"Accept", "Authorization", "Content-Type", "X-CSRF-Token",
-				"Access-Control-Allow-Headers", "X-Requested-With",
-				"Access-Control-Request-Method", "Access-Control-Request-Headers",
-			},
-			MaxAge: 300,
-		}))
-
-		v1.HandlerWithOptions(server, v1.ChiServerOptions{
-			BaseRouter: r,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				errorResponseJSON(w, http.StatusInternalServerError, err)
-			},
-		})
+	// Register all OpenAPI routes
+	v1.HandlerWithOptions(server, v1.ChiServerOptions{
+		BaseRouter: r,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			errorResponseJSON(w, http.StatusBadRequest, fmt.Errorf("%s", err.Error()))
+		},
 	})
 
 	return r, nil
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	errorResponseJSON(w, http.StatusNotFound, errors.New("not found"))
-}
-
-// DefaultError writes a default error response.
-func DefaultError(w http.ResponseWriter, r *http.Request, err error) {
-	errorResponseJSON(w, http.StatusInternalServerError, err)
-}
-
-// JsonContentType middleware sets Content-Type to application/json.
-func JsonContentType(next http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		next.ServeHTTP(w, r)
+// corsMiddleware returns a middleware that sets CORS headers.
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				allowed := false
+				for _, o := range allowedOrigins {
+					if o == "*" || o == origin {
+						allowed = true
+						break
+					}
+				}
+				if allowed || len(allowedOrigins) == 0 {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+					w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
-	return http.HandlerFunc(fn)
 }
 
-// LoggerFromRequest extracts the zap logger from context or uses the default.
-func LoggerFromRequest(r *http.Request, log *zap.Logger) *zap.Logger {
-	if l, ok := r.Context().Value(middleware.LogEntryCtxKey).(*zap.Logger); ok {
-		return l
+// requestLoggerMiddleware logs each request with method, path, status, and duration.
+func requestLoggerMiddleware(log logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := chiMiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+			log.Info("http request",
+				logger.LogField{Key: "method", Value: r.Method},
+				logger.LogField{Key: "path", Value: r.URL.Path},
+				logger.LogField{Key: "status", Value: ww.Status()},
+				logger.LogField{Key: "duration", Value: time.Since(start).String()},
+			)
+		})
 	}
-	return log
+}
+
+// jwtExtractorMiddleware extracts the Bearer token from the Authorization header
+// and stores it in the request context.
+func jwtExtractorMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := extractBearerToken(r)
+		ctx := context.WithValue(r.Context(), httpctx.ContextKeyJWT, token)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// extractBearerToken extracts a Bearer token from the Authorization header.
+func extractBearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return ""
+	}
+	parts := strings.SplitN(auth, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		return ""
+	}
+	return parts[1]
 }

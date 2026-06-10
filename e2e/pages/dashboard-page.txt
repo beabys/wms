@@ -1,0 +1,18 @@
+uid=2_0 RootWebArea "WMS Admin Portal" url="http://localhost:5173/dashboard"
+  uid=3_0 complementary
+    uid=3_1 StaticText "WMS"
+    uid=3_2 StaticText "Admin"
+    uid=3_3 navigation
+      uid=3_4 button "Dashboard"
+      uid=3_5 button "Users"
+      uid=3_6 button "Create User"
+      uid=3_7 button "Customers"
+      uid=3_8 button "Invite Customer"
+    uid=3_9 StaticText "admin@wms.local"
+    uid=3_10 button "Switch to dark mode"
+    uid=3_11 button "Logout"
+  uid=3_12 main
+    uid=3_13 heading "Dashboard" level="1"
+    uid=3_14 main
+      uid=3_15 StaticText "Welcome, System Admin!"
+      uid=3_16 StaticText "Use the sidebar to navigate between sections."

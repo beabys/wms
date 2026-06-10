@@ -11,29 +11,22 @@ env:
   PG_PASSWORD: wms
   PG_HOST: localhost
   PG_PORT: 5432
-  PG_DSN: "postgres://wms:wms@localhost:5432"
   GO_VERSION: '1.26'
   NODE_VERSION: '22'
-  # Database DSNs for unit tests (individual databases per service)
-  TEST_DSN: "postgres://wms:wms@localhost:5432/wms_test?sslmode=disable"
-  AUTH_DSN: "postgres://wms:wms@localhost:5432/wms_auth?sslmode=disable"
-  CUSTOMER_DSN: "postgres://wms:wms@localhost:5432/wms_customer?sslmode=disable"
-  INBOUND_DSN: "postgres://wms:wms@localhost:5432/wms_inbound?sslmode=disable"
-  INVENTORY_DSN: "postgres://wms:wms@localhost:5432/wms_inventory?sslmode=disable"
 
 jobs:
   # ================================================================
-  #  MIGRATIONS — up + down for all 4 services with databases
+  #  MIGRATIONS — up + down + idempotent for auth + customer
   # ================================================================
   migrations:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms_test
+          POSTGRES_DB: wms
         ports:
           - 5432:5432
         options: >-
@@ -50,26 +43,26 @@ jobs:
         run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
       - name: Create per-service databases
         run: |
-          for db in wms_auth wms_customer wms_inbound wms_inventory; do
-            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          for db in wms_auth wms_customer; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms" -c "CREATE DATABASE $db;"
           done
       - name: Migrate UP — all services
         run: |
-          for dir in login-service customer-service inbound-service inventory-service; do
+          for dir in auth-service customer-service; do
             db_name="wms_${dir%%-*}"
             echo "═══ UP $dir → $db_name ═══"
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
           done
       - name: Migrate DOWN 1 step — all services
         run: |
-          for dir in login-service customer-service inbound-service inventory-service; do
+          for dir in auth-service customer-service; do
             db_name="wms_${dir%%-*}"
             echo "═══ DOWN $dir → $db_name ═══"
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations down 1
           done
       - name: Migrate UP again — verify idempotent
         run: |
-          for dir in login-service customer-service inbound-service inventory-service; do
+          for dir in auth-service customer-service; do
             db_name="wms_${dir%%-*}"
             echo "═══ UP (idempotent) $dir → $db_name ═══"
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
@@ -103,11 +96,11 @@ jobs:
     needs: be-lint
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: wms
           POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms_test
+          POSTGRES_DB: wms
         ports:
           - 5432:5432
         options: >-
@@ -125,21 +118,19 @@ jobs:
         run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
       - name: Create databases + run migrations
         run: |
-          for db in wms_auth wms_customer wms_inbound wms_inventory; do
-            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          for db in wms_auth wms_customer; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms" -c "CREATE DATABASE $db;"
           done
-          for dir in login-service customer-service inbound-service inventory-service; do
+          for dir in auth-service customer-service; do
             db_name="wms_${dir%%-*}"
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
           done
       - name: Run unit + integration tests with race
         run: |
-          export DATABASE_DSN="$TEST_DSN"
-          export LOGIN_DATABASE_DSN="$AUTH_DSN"
-          export CUSTOMER_DATABASE_DSN="$CUSTOMER_DSN"
-          export INBOUND_DATABASE_DSN="$INBOUND_DSN"
-          export INVENTORY_DATABASE_DSN="$INVENTORY_DSN"
-          go test -tags=integration -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-output.log
+          go test -tags=integration -race -coverprofile=coverage.out -covermode=atomic \
+            ./auth-service/... ./customer-service/... \
+            ./auth-service-bff/... ./customer-service-bff/... \
+            ./pkg/... 2>&1 | tee test-output.log
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
@@ -153,13 +144,13 @@ jobs:
           path: test-output.log
 
   # ================================================================
-  #  FE LINT — type check + build
+  #  FE LINT — admin-ui (type check + build)
   # ================================================================
-  fe-lint:
+  fe-lint-admin:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./FE
+        working-directory: ./admin-ui
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -169,21 +160,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          cache-dependency-path: './FE/pnpm-lock.yaml'
+          cache-dependency-path: './admin-ui/pnpm-lock.yaml'
       - name: Install
         run: pnpm install
-      - name: TypeScript check + build
+      - name: TypeScript check
+        run: npx vue-tsc --noEmit
+      - name: Build
         run: pnpm build
 
   # ================================================================
-  #  FE UNIT TESTS
+  #  FE LINT — customer-ui (type check + build)
   # ================================================================
-  fe-unit:
+  fe-lint-customer:
     runs-on: ubuntu-latest
-    needs: fe-lint
     defaults:
       run:
-        working-directory: ./FE
+        working-directory: ./customer-ui
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -193,138 +185,233 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          cache-dependency-path: './FE/pnpm-lock.yaml'
+          cache-dependency-path: './customer-ui/pnpm-lock.yaml'
       - name: Install
         run: pnpm install
-      - name: Run tests
-        run: pnpm test
+      - name: TypeScript check
+        run: npx vue-tsc --noEmit
+      - name: Build
+        run: pnpm build
 
   # ================================================================
-  #  E2E — full-stack against real services
+  #  FE UNIT TESTS — admin-ui
   # ================================================================
-  e2e:
+  fe-unit-admin:
     runs-on: ubuntu-latest
-    needs: [be-unit, fe-unit, migrations]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    needs: fe-lint-admin
+    defaults:
+      run:
+        working-directory: ./admin-ui
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Install migrate CLI
-        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-      - name: Create databases
-        run: |
-          for db in wms_auth wms_customer wms_inbound wms_inventory; do
-            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
-          done
-      - name: Run all migrations
-        run: |
-          for dir in login-service customer-service inbound-service inventory-service; do
-            db_name="wms_${dir%%-*}"
-            migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
-          done
-      - name: Run Playwright E2E tests
-        working-directory: ./e2e/playwright
-        run: npx playwright test
-        env:
-          VITE_USE_MOCK: "false"
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: e2e/playwright/playwright-report/
-
-  # ================================================================
-  #  PLAYWRIGHT E2E — full-stack browser tests
-  # ================================================================
-  playwright-e2e:
-    runs-on: ubuntu-latest
-    needs: [be-unit, fe-unit, migrations]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: wms
-          POSTGRES_PASSWORD: wms
-          POSTGRES_DB: wms_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
       - uses: pnpm/action-setup@v4
         with:
           version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install playwright deps
-        working-directory: ./e2e/playwright
-        run: npm ci && npx playwright install chromium
-      - name: Install FE deps
-        working-directory: ./FE
+          cache: 'pnpm'
+          cache-dependency-path: './admin-ui/pnpm-lock.yaml'
+      - name: Install
         run: pnpm install
+      - name: Run tests
+        run: pnpm vitest run
+
+  # ================================================================
+  #  FE UNIT TESTS — customer-ui
+  # ================================================================
+  fe-unit-customer:
+    runs-on: ubuntu-latest
+    needs: fe-lint-customer
+    defaults:
+      run:
+        working-directory: ./customer-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: './customer-ui/pnpm-lock.yaml'
+      - name: Install
+        run: pnpm install
+      - name: Run tests
+        run: pnpm vitest run
+
+  # ================================================================
+  #  E2E — full-stack Playwright against real services
+  # ================================================================
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [be-unit, fe-unit-admin, fe-unit-customer, migrations]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wms
+          POSTGRES_PASSWORD: wms
+          POSTGRES_DB: wms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
       - name: Create databases + migrations
         run: |
-          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-          for db in wms_auth wms_customer wms_inbound wms_inventory; do
-            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms_test" -c "CREATE DATABASE $db;"
+          for db in wms_auth wms_customer; do
+            psql "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/wms" -c "CREATE DATABASE $db;"
           done
-          for dir in login-service customer-service inbound-service inventory-service; do
+          for dir in auth-service customer-service; do
             db_name="wms_${dir%%-*}"
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
           done
+
+      - name: Generate JWT keys
+        run: |
+          openssl genrsa -out /tmp/jwt_private.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/jwt_private.pem -pubout -out /tmp/jwt_public.pem 2>/dev/null
+          echo "JWT_PRIVATE_KEY_PATH=/tmp/jwt_private.pem" >> $GITHUB_ENV
+          echo "JWT_PUBLIC_KEY_PATH=/tmp/jwt_public.pem" >> $GITHUB_ENV
+
+      - name: Build Go binaries
+        run: |
+          go build -o /tmp/auth-service ./auth-service/cmd/server
+          go build -o /tmp/auth-service-bff ./auth-service-bff/cmd/server
+          go build -o /tmp/customer-service ./customer-service/cmd/server
+          go build -o /tmp/customer-service-bff ./customer-service-bff/cmd/server
+
+      - name: Start auth-service gRPC
+        run: |
+          /tmp/auth-service &
+          echo "auth_pid=$!" >> $GITHUB_ENV
+          # Wait for port 50001
+          for i in $(seq 1 15); do
+            nc -z localhost 50001 && echo "auth-service ready" && break
+            sleep 1
+          done
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: wms
+          DB_PASSWORD: wms
+          DB_NAME: wms_auth
+          JWT_PRIVATE_KEY_PATH: /tmp/jwt_private.pem
+          JWT_PUBLIC_KEY_PATH: /tmp/jwt_public.pem
+          SERVER_PORT: 50001
+
+      - name: Start auth-service-bff
+        run: |
+          /tmp/auth-service-bff &
+          echo "auth_bff_pid=$!" >> $GITHUB_ENV
+          for i in $(seq 1 15); do
+            nc -z localhost 8081 && echo "auth-bff ready" && break
+            sleep 1
+          done
+        env:
+          AUTH_SERVICE_GRPC_HOST: localhost
+          AUTH_SERVICE_GRPC_PORT: 50001
+
+      - name: Start customer-service gRPC
+        run: |
+          /tmp/customer-service &
+          echo "customer_pid=$!" >> $GITHUB_ENV
+          for i in $(seq 1 15); do
+            nc -z localhost 50002 && echo "customer-service ready" && break
+            sleep 1
+          done
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: wms
+          DB_PASSWORD: wms
+          DB_NAME: wms_customer
+          AUTH_SERVICE_HOST: localhost
+          AUTH_SERVICE_PORT: 50001
+          JWT_PUBLIC_KEY_PATH: /tmp/jwt_public.pem
+          SERVER_PORT: 50002
+
+      - name: Start customer-service-bff
+        run: |
+          /tmp/customer-service-bff &
+          echo "customer_bff_pid=$!" >> $GITHUB_ENV
+          for i in $(seq 1 15); do
+            nc -z localhost 8082 && echo "customer-bff ready" && break
+            sleep 1
+          done
+        env:
+          CUSTOMER_SERVICE_GRPC_HOST: localhost
+          CUSTOMER_SERVICE_GRPC_PORT: 50002
+
+      - name: Install FE deps + start admin-ui
+        run: |
+          cd admin-ui
+          pnpm install
+          npx vite --port 5173 &
+          echo "admin_ui_pid=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Install FE deps + start customer-ui
+        run: |
+          cd customer-ui
+          pnpm install
+          npx vite --port 5174 &
+          echo "customer_ui_pid=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Install Playwright
+        working-directory: ./e2e
+        run: |
+          pnpm install
+          npx playwright install chromium
+
       - name: Run Playwright E2E tests
-        working-directory: ./e2e/playwright
-        run: npx playwright test
+        working-directory: ./e2e
+        run: pnpm test
         env:
           VITE_USE_MOCK: "false"
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: e2e/playwright/playwright-report/
+          path: e2e/playwright-report/
 
-  # ================================================================
-  #  DOCKER SMOKE — container health checks
-  # ================================================================
-  docker-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Start services
+      - name: Dump service logs on failure
+        if: failure()
         run: |
-          docker compose -f deployment/docker-compose.yml up -d
-          sleep 15
-          docker compose -f deployment/docker-compose.yml ps
-      - name: Health check PostgreSQL
-        run: docker exec $(docker ps -q -f name=postgres) pg_isready -U wms
-      - name: Check Kafka
-        run: docker exec $(docker ps -q -f name=kafka) kafka-topics.sh --bootstrap-server localhost:9092 --list || echo "Kafka not available (expected when disabled)"
-      - name: Tear down
+          echo "=== auth-service stderr ==="
+          cat /tmp/auth-service.log 2>/dev/null || echo "no log"
+          echo "=== Ports in use ==="
+          ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || true
+
+      - name: Cleanup background processes
         if: always()
-        run: docker compose -f deployment/docker-compose.yml down
+        run: |
+          kill ${{ env.auth_pid }} 2>/dev/null || true
+          kill ${{ env.auth_bff_pid }} 2>/dev/null || true
+          kill ${{ env.customer_pid }} 2>/dev/null || true
+          kill ${{ env.customer_bff_pid }} 2>/dev/null || true
+          kill ${{ env.admin_ui_pid }} 2>/dev/null || true
+          kill ${{ env.customer_ui_pid }} 2>/dev/null || true

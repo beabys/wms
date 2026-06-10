@@ -1,106 +1,136 @@
-.PHONY: build-all test-all lint proto-gen docker-up docker-down \
-        run-login run-customer run-inbound tidy seed
+SHELL:=/bin/bash
+PROJECT_PATH := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+-include .env
+export
 
-# Build all Go packages
-build-all:
-	go build ./...
+# Default credentials (match docker-compose.infra.yml)
+AUTH_DB_USER   ?= wms
+AUTH_DB_PASSWORD ?= wms
+AUTH_DB_HOST   ?= localhost
+AUTH_DB_PORT   ?= 5432
+AUTH_DB_NAME   ?= wms_auth
+CUSTOMER_DB_USER    ?= wms
+CUSTOMER_DB_PASSWORD ?= wms
+CUSTOMER_DB_HOST    ?= localhost
+CUSTOMER_DB_PORT ?= 5432
+CUSTOMER_DB_NAME    ?= wms_customer
 
-# Run all unit and integration tests
-test-all:
-	go test ./... -race -cover -count=1
+# ─── Proto ───────────────────────────────────────────
+.PHONY: proto-gen
+proto-gen:
+	docker run -w /proto/defs --rm -v $(CURDIR)/proto:/proto --platform linux/amd64 ealves/buf:0.1.0-rc4 generate
 
-# Run golangci-lint
-lint:
-	golangci-lint run ./...
-
-# Proto builder Docker image — contains buf + protoc plugins
-PROTO_IMAGE ?= wms-proto-builder:latest
-proto-build:
-	docker build -t $(PROTO_IMAGE) -f proto/Dockerfile .
-
-# Generate proto Go code (requires proto-build first)
-proto-gen: proto-build
-	docker run --rm \
-		-v $(PWD):/workspace \
-		-w /workspace/proto/defs \
-		$(PROTO_IMAGE) generate
-
-# Docker Compose lifecycle
-docker-up:
-	docker compose -f deployment/docker-compose.yml up -d
-
-docker-down:
-	docker compose -f deployment/docker-compose.yml down
-
-# Service run targets (requires docker-up for infra)
-.PHONY: run
-run:  ## Start all services as modular monolith (one process)
-	go run ./cmd/wms
-
-.PHONY: run-login
-run-login:
-	go run ./login-service/cmd/server
-
-.PHONY: run-customer
-run-customer:
-	go run ./customer-service/cmd/server
-
-.PHONY: run-inbound
-run-inbound:
-	go run ./inbound-service/cmd/server
-
-# Go module maintenance
+# ─── Go ──────────────────────────────────────────────
+.PHONY: tidy build-all test lint
 tidy:
 	go mod tidy
+build-all:
+	go build ./...
+test:
+	go test ./... -race -coverprofile .testCoverage.txt -v
+lint:
+	staticcheck ./... || true
 
-# =============================================================================
-# Database Migrations (golang-migrate/migrate CLI)
-# =============================================================================
+# ─── Mocks ────────────────────────────────────────────
+MOCK_DIRS := auth-service auth-service-bff customer-service customer-service-bff
+.PHONY: mock-gen
+mock-gen:
+	@for dir in $(MOCK_DIRS); do \
+		echo "Generating mocks in $$dir..."; \
+		cd $$dir && mockery && cd ..; \
+	done
+	go mod tidy
 
-# Install migrate CLI
-.PHONY: install-migrate
-install-migrate:
-	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+# ─── Docker Network ──────────────────────────────────
+.PHONY: network-create network-rm
+network-create:
+	docker network inspect wms-net >/dev/null 2>&1 || docker network create wms-net
+network-rm:
+	docker network rm wms-net 2>/dev/null || true
 
-# Create new migration for a service (usage: make migrate-create SERVICE=login-service)
-.PHONY: migrate-create
-migrate-create:
-	@read -p "Migration name: " name; \
-	cd $(SERVICE) && migrate create -ext sql -dir migrations -seq $$name
+# ─── Infrastructure ──────────────────────────────────
+.PHONY: start-infra stop-infra
+start-infra:
+	docker compose -f deployment/docker-compose.infra.yml up -d
+stop-infra:
+	docker compose -f deployment/docker-compose.infra.yml down
 
-# Run all pending migrations for a service (usage: make migrate-up SERVICE=login-service DATABASE_URL=...)
-.PHONY: migrate-up
+# ─── Backend (individual) ────────────────────────────
+.PHONY: start-auth stop-auth start-customer stop-customer
+start-auth: start-infra
+	docker compose -f deployment/docker-compose.auth.yml up -d --build
+stop-auth:
+	docker compose -f deployment/docker-compose.auth.yml down
+start-customer: start-infra
+	docker compose -f deployment/docker-compose.customer.yml up -d --build
+stop-customer:
+	docker compose -f deployment/docker-compose.customer.yml down
+
+# ─── Backend (all) ────────────────────────────────────
+.PHONY: start-be stop-be be-logs be-ps
+start-be: network-create
+	docker compose -f deployment/docker-compose.yml up -d --build
+stop-be:
+	docker compose -f deployment/docker-compose.yml down
+be-logs:
+	docker compose -f deployment/docker-compose.yml logs -f
+be-ps:
+	docker compose -f deployment/docker-compose.yml ps
+
+# ─── Migrations ──────────────────────────────────────
+.PHONY: migrate-up migrate-down migrate-create
 migrate-up:
-	cd $(SERVICE) && migrate -database "$(DATABASE_URL)" -path migrations up
+	@read -p "Service (auth-service/customer-service): " svc; \
+	url=""; \
+	if [ "$$svc" = "auth-service" ]; then \
+		url="postgres://$(AUTH_DB_USER):$(AUTH_DB_PASSWORD)@$(AUTH_DB_HOST):$(AUTH_DB_PORT)/$(AUTH_DB_NAME)?sslmode=disable"; \
+	elif [ "$$svc" = "customer-service" ]; then \
+		url="postgres://$(CUSTOMER_DB_USER):$(CUSTOMER_DB_PASSWORD)@$(CUSTOMER_DB_HOST):$(CUSTOMER_DB_PORT)/$(CUSTOMER_DB_NAME)?sslmode=disable"; \
+	fi; \
+	migrate -path $$svc/migrations -database "$$url" up
 
-# Rollback last migration for a service (usage: make migrate-down SERVICE=login-service DATABASE_URL=...)
-.PHONY: migrate-down
 migrate-down:
-	cd $(SERVICE) && migrate -database "$(DATABASE_URL)" -path migrations down 1
+	@read -p "Service: " svc; \
+	read -p "Steps (default 1): " steps; \
+	url="postgres://$(AUTH_DB_USER):$(AUTH_DB_PASSWORD)@$(AUTH_DB_HOST):$(AUTH_DB_PORT)/$(AUTH_DB_NAME)?sslmode=disable"; \
+	migrate -path $$svc/migrations -database "$$url" down $${steps:-1}
 
-# Create a seed user for development (requires running services + PostgreSQL)
-.PHONY: seed
-seed:
-	@echo "Registering seed user..."
-	@curl -s -X POST http://localhost:8080/v1/auth/register \
-		-H 'Content-Type: application/json' \
-		-d '{"email":"admin@wms.com","password":"password123","company_name":"WMS Admin"}' && echo ""
-	@echo "Seed user created: admin@wms.com / password123"
+migrate-create:
+	@read -p "Service: " svc; \
+	read -p "Description: " desc; \
+	migrate create -ext sql -dir $$svc/migrations -seq $$desc
 
-# Show help
-help:
-	@echo "Targets:"
-	@echo "  build-all    - go build ./..."
-	@echo "  test-all     - go test ./... -race -cover"
-	@echo "  lint         - golangci-lint run"
-	@echo "  proto-gen    - generate Go code from protos"
-	@echo "  docker-up    - start all infra (PostgreSQL, Redis, Kafka)"
-	@echo "  docker-down  - stop all infra"
-	@echo "  run-login    - go run login-service"
-	@echo "  run-customer - go run customer-service"
-	@echo "  run-inbound  - go run inbound-service"
-	@echo "  tidy         - go mod tidy"
-	@echo "  install-migrate - install golang-migrate CLI"
-	@echo "  migrate-create  - create new migration (SERVICE=<name>)"
-	@echo "  migrate-up      - run pending migrations (SERVICE=... DATABASE_URL=...)"
-	@echo "  migrate-down    - rollback last migration (SERVICE=... DATABASE_URL=...)"
+# ─── Frontend (individual) ────────────────────────────
+.PHONY: start-admin-ui start-customer-ui
+start-admin-ui:
+	cd admin-ui && npm run dev
+start-customer-ui:
+	cd customer-ui && npm run dev
+
+# ─── Frontend (all) ──────────────────────────────────
+.PHONY: start-fe stop-fe
+start-fe:
+	@echo "Starting admin-ui on :5173 and customer-ui on :5174..."
+	cd admin-ui && npm run dev & \
+	cd customer-ui && npm run dev & \
+	wait
+stop-fe:
+	-pkill -f "vite.*admin-ui" 2>/dev/null || true
+	-pkill -f "vite.*customer-ui" 2>/dev/null || true
+
+# ─── Dev (everything) ────────────────────────────────
+.PHONY: dev
+dev: network-create
+	docker compose -f deployment/docker-compose.infra.yml up -d
+	@echo "Waiting for databases..."
+	@sleep 3
+	$(MAKE) start-auth
+	$(MAKE) start-customer
+	@echo "Backend services started. Run 'make start-fe' for frontend."
+
+# ─── Utility ──────────────────────────────────────────
+.PHONY: unit unit-coverage
+unit:
+	go test $$(go list ./pkg/... ./auth-service/... ./customer-service/... 2>/dev/null | grep -v /mocks) -race -coverprofile .testCoverage.txt -v
+unit-coverage: unit
+	go tool cover -html=.testCoverage.txt -o unit.html

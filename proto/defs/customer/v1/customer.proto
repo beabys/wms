@@ -1,32 +1,64 @@
 syntax = "proto3";
-
 package customer.v1;
 
 option go_package = "github.com/beabys/wms/proto/gen/go/customer/v1;customerv1";
 
 import "common/v1/common.proto";
-import "customer/v1/rate_card.proto";
+
+service CustomerService {
+  rpc RegisterCustomer(RegisterCustomerRequest) returns (RegisterCustomerResponse);
+  rpc GetCustomer(GetCustomerRequest) returns (GetCustomerResponse);
+  rpc UpdateCustomer(UpdateCustomerRequest) returns (UpdateCustomerResponse);
+  rpc ListCustomers(ListCustomersRequest) returns (ListCustomersResponse);
+  rpc ApproveCustomer(ApproveCustomerRequest) returns (ApproveCustomerResponse);
+  rpc RejectCustomer(RejectCustomerRequest) returns (RejectCustomerResponse);
+  rpc InviteCustomer(InviteCustomerRequest) returns (InviteCustomerResponse);
+  rpc SuspendCustomer(SuspendCustomerRequest) returns (SuspendCustomerResponse);
+  rpc RestoreCustomer(RestoreCustomerRequest) returns (RestoreCustomerResponse);
+  rpc GetCustomerByAdminID(GetCustomerByAdminIDRequest) returns (GetCustomerByAdminIDResponse);
+  rpc ListAuditLogs(ListAuditLogsRequest) returns (ListAuditLogsResponse);
+}
+
+message GetCustomerByAdminIDRequest {
+  string admin_user_id = 1;
+}
+
+message GetCustomerByAdminIDResponse {
+  Customer customer = 1;
+}
 
 message Customer {
   string id = 1;
   string company_name = 2;
-  string vat_number = 3;
-  common.v1.Address address = 4;
-  string status = 5;
-  string rate_card_id = 6;
-  string credit_balance = 7;
-  string created_at = 8;
+  string email = 3;
+  string phone = 4;
+  string vat_number = 5;
+  string address = 6;
+  string city = 7;
+  string postal_code = 8;
+  string country = 9;
+  string status = 10;
+  string company_admin_id = 11;
+  common.v1.Timestamp created_at = 12;
+  common.v1.Timestamp updated_at = 13;
 }
 
-message CreateCustomerRequest {
-  string company_name = 1;
-  string vat_number = 2;
-  common.v1.Address address = 3;
-  string rate_card_id = 4;
+message RegisterCustomerRequest {
+  string token = 1;
+  string company_name = 2;
+  string email = 3;
+  string password = 4;
+  string phone = 5;
+  string vat_number = 6;
+  string address = 7;
+  string city = 8;
+  string postal_code = 9;
+  string country = 10;
 }
 
-message CreateCustomerResponse {
+message RegisterCustomerResponse {
   Customer customer = 1;
+  string access_token = 2;
 }
 
 message GetCustomerRequest {
@@ -37,8 +69,23 @@ message GetCustomerResponse {
   Customer customer = 1;
 }
 
+message UpdateCustomerRequest {
+  string id = 1;
+  string phone = 2;
+  string address = 3;
+  string city = 4;
+  string postal_code = 5;
+  string country = 6;
+}
+
+message UpdateCustomerResponse {
+  Customer customer = 1;
+}
+
 message ListCustomersRequest {
-  common.v1.Pagination pagination = 1;
+  string status = 1;
+  int32 page = 2;
+  int32 page_size = 3;
 }
 
 message ListCustomersResponse {
@@ -47,35 +94,67 @@ message ListCustomersResponse {
 }
 
 message ApproveCustomerRequest {
-  string customer_id = 1;
+  string id = 1;
+  string approved_by = 2;
 }
 
 message ApproveCustomerResponse {
   Customer customer = 1;
 }
 
-message SuspendCustomerRequest {
-  string customer_id = 1;
+message RejectCustomerRequest {
+  string id = 1;
   string reason = 2;
 }
 
-message SuspendCustomerResponse {
-  Customer customer = 1;
+message RejectCustomerResponse {
+  bool success = 1;
 }
 
 message InviteCustomerRequest {
   string email = 1;
+  string invited_by = 2;
 }
 
 message InviteCustomerResponse {
-  string invitation_link = 1;
+  string invite_token = 1;
+  common.v1.Timestamp expires_at = 2;
 }
 
-service CustomerService {
-  rpc CreateCustomer(CreateCustomerRequest) returns (CreateCustomerResponse);
-  rpc GetCustomer(GetCustomerRequest) returns (GetCustomerResponse);
-  rpc ListCustomers(ListCustomersRequest) returns (ListCustomersResponse);
-  rpc ApproveCustomer(ApproveCustomerRequest) returns (ApproveCustomerResponse);
-  rpc SuspendCustomer(SuspendCustomerRequest) returns (SuspendCustomerResponse);
-  rpc InviteCustomer(InviteCustomerRequest) returns (InviteCustomerResponse);
+message SuspendCustomerRequest {
+  string id = 1;
+  string reason = 2;
+}
+
+message SuspendCustomerResponse {
+  bool success = 1;
+}
+
+message RestoreCustomerRequest {
+  string id = 1;
+  string restored_by = 2;
+}
+
+message RestoreCustomerResponse {
+  Customer customer = 1;
+}
+
+message AuditEntry {
+  string id = 1;
+  string customer_id = 2;
+  string action = 3;
+  string performed_by = 4;
+  string details = 5;
+  int64 created_at = 6;
+}
+
+message ListAuditLogsRequest {
+  string customer_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListAuditLogsResponse {
+  repeated AuditEntry entries = 1;
+  common.v1.Pagination pagination = 2;
 }

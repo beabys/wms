@@ -1,24 +1,54 @@
 syntax = "proto3";
-
 package auth.v1;
 
 option go_package = "github.com/beabys/wms/proto/gen/go/auth/v1;authv1";
 
 import "common/v1/common.proto";
+import "google/protobuf/wrappers.proto";
+
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc AssignRole(AssignRoleRequest) returns (AssignRoleResponse);
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
+}
 
 message User {
   string id = 1;
   string email = 2;
-  string role = 3;
-  string customer_id = 4;
-  string created_at = 5;
+  string name = 3;
+  string role = 4;
+  string customer_id = 5;
+  bool active = 6;
+  common.v1.Timestamp created_at = 7;
+  common.v1.Timestamp updated_at = 8;
+}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  repeated Permission permissions = 4;
+  bool is_system = 5;
+}
+
+message Permission {
+  string service = 1;
+  string action = 2;
+  string resource = 3;
 }
 
 message CreateUserRequest {
   string email = 1;
-  string password = 2;
-  string role = 3;
-  string customer_id = 4;
+  string name = 2;
+  string password = 3;
+  string role = 4;
+  string customer_id = 5;
+  string created_by = 6;
 }
 
 message CreateUserResponse {
@@ -33,8 +63,22 @@ message GetUserResponse {
   User user = 1;
 }
 
+message UpdateUserRequest {
+  string id = 1;
+  string name = 2;
+  string role = 3;
+  google.protobuf.BoolValue active = 4;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
 message ListUsersRequest {
-  common.v1.Pagination pagination = 1;
+  string customer_id = 1;
+  string role = 2;
+  int32 page = 3;
+  int32 page_size = 4;
 }
 
 message ListUsersResponse {
@@ -42,20 +86,38 @@ message ListUsersResponse {
   common.v1.Pagination pagination = 2;
 }
 
-message UpdateUserRequest {
+message DeleteUserRequest {
   string id = 1;
-  string email = 2;
-  string role = 3;
-  string customer_id = 4;
 }
 
-message UpdateUserResponse {
-  User user = 1;
+message DeleteUserResponse {
+  bool success = 1;
 }
 
-service UserService {
-  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
-  rpc GetUser(GetUserRequest) returns (GetUserResponse);
-  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
-  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+message AssignRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
+message AssignRoleResponse {
+  bool success = 1;
+}
+
+message ListRolesRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+message CreateRoleRequest {
+  string name = 1;
+  string description = 2;
+  repeated Permission permissions = 3;
+}
+
+message CreateRoleResponse {
+  Role role = 1;
 }
