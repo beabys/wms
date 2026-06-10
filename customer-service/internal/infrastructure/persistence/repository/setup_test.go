@@ -19,9 +19,9 @@ import (
 func setupTestDB(t *testing.T) database.Database {
 	dbHost := getEnv("DB_HOST", "localhost")
 	dbPort := getEnvInt("DB_PORT", 5432)
-	dbUser := getEnv("DB_USER", "postgres")
-	dbPass := getEnv("DB_PASSWORD", "postgres")
-	dbName := getEnv("DB_NAME", "customer_service_test")
+	dbUser := getEnv("DB_USER", "wms")
+	dbPass := getEnv("DB_PASSWORD", "wms")
+	dbName := getEnv("DB_NAME", "wms_customer")
 	sslMode := getEnv("DB_SSLMODE", "disable")
 
 	db := database.New()

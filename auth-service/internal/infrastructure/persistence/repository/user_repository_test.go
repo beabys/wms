@@ -10,13 +10,12 @@ import (
 
 	"github.com/beabys/wms/auth-service/internal/application/auth/repository"
 	"github.com/beabys/wms/auth-service/internal/domain/auth/model"
-	"github.com/beabys/wms/auth-service/mocks/database"
+	dbmocks "github.com/beabys/wms/auth-service/mocks/database"
 	"github.com/beabys/wms/pkg/database"
 	"github.com/beabys/wms/pkg/logger"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/mock"
 )
 
 func setupUserRepoTest(t *testing.T) (*UserRepository, func()) {
@@ -41,7 +40,7 @@ func setupUserRepoTest(t *testing.T) (*UserRepository, func()) {
 
 	log := logger.NewSlogLogger(slog.LevelDebug)
 	pg := &database.Postgres{DB: db}
-	d := mocks.NewDatabase(t)
+	d := dbmocks.NewDatabase(t)
 	d.On("Connect").Return(nil)
 	d.On("Ping").Return(nil)
 	d.On("Close").Return(nil)

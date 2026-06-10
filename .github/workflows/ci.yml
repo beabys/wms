@@ -126,7 +126,9 @@ jobs:
             migrate -database "postgres://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/${db_name}?sslmode=disable" -path $dir/migrations up
           done
       - name: Run unit + integration tests with race
+        shell: bash
         run: |
+          set -o pipefail
           go test -tags=integration -race -coverprofile=coverage.out -covermode=atomic \
             ./auth-service/... ./customer-service/... \
             ./auth-service-bff/... ./customer-service-bff/... \
