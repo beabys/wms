@@ -1,0 +1,49 @@
+syntax = "proto3";
+package customer.v1;
+
+option go_package = "github.com/beabys/wms/proto/gen/go/customer/v1;customerv1";
+
+import "common/v1/common.proto";
+
+service PermissionService {
+  rpc AssignCompanyRole(AssignCompanyRoleRequest) returns (AssignCompanyRoleResponse);
+  rpc ListCompanyRoles(ListCompanyRolesRequest) returns (ListCompanyRolesResponse);
+  rpc GetUserPermissions(GetUserPermissionsRequest) returns (GetUserPermissionsResponse);
+}
+
+message CompanyRole {
+  string id = 1;
+  string customer_id = 2;
+  string name = 3;
+  repeated string permissions = 4;
+  bool is_default = 5;
+}
+
+message AssignCompanyRoleRequest {
+  string customer_id = 1;
+  string user_id = 2;
+  string role_name = 3;
+  repeated string permissions = 4;
+  string assigned_by = 5;
+}
+
+message AssignCompanyRoleResponse {
+  bool success = 1;
+}
+
+message ListCompanyRolesRequest {
+  string customer_id = 1;
+}
+
+message ListCompanyRolesResponse {
+  repeated CompanyRole roles = 1;
+}
+
+message GetUserPermissionsRequest {
+  string user_id = 1;
+  string customer_id = 2;
+}
+
+message GetUserPermissionsResponse {
+  repeated string permissions = 1;
+}

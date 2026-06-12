@@ -1,0 +1,41 @@
+
+services:
+  auth-service:
+    build:
+      context: ..
+      dockerfile: auth-service/Dockerfile
+    container_name: wms-auth-service
+    env_file: ../.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: wms
+      DB_PASSWORD: wms
+      DB_NAME: wms_auth
+      AUTH_SERVICE_GRPC_HOST: 0.0.0.0
+    restart: on-failure
+    ports:
+      - "50001:50001"
+    networks:
+      - wms-net
+
+  auth-service-bff:
+    build:
+      context: ..
+      dockerfile: auth-service-bff/Dockerfile
+    container_name: wms-auth-bff
+    env_file: ../.env
+    environment:
+      AUTH_SERVICE_GRPC_HOST: auth-service
+      AUTH_SERVICE_GRPC_PORT: 50001
+    ports:
+      - "8081:8081"
+    depends_on:
+      auth-service:
+        condition: service_started
+    networks:
+      - wms-net
+
+networks:
+  wms-net:
+    external: true

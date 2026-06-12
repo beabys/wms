@@ -1,0 +1,9 @@
+
+include:
+  - docker-compose.infra.yml
+  - docker-compose.auth.yml
+  - docker-compose.customer.yml
+
+networks:
+  wms-net:
+    driver: bridge

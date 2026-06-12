@@ -1,0 +1,16 @@
+all: true
+structname: '{{.InterfaceName}}'
+template: testify
+packages:
+  github.com/beabys/wms/customer-service/internal/application/customer/repository:
+    config:
+      dir: mocks/application/customer/repository
+      filename: "{{.InterfaceName}}.go"
+  github.com/beabys/wms/customer-service/internal/infrastructure/adapters/grpc:
+    config:
+      dir: mocks/infrastructure/adapters/grpc
+      filename: "{{.InterfaceName}}.go"
+  github.com/beabys/wms/customer-service/internal/application/customer/ports:
+    config:
+      dir: mocks/application/customer/ports
+      filename: "{{.InterfaceName}}.go"
